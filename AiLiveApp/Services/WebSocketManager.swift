@@ -20,12 +20,13 @@ class WebSocketManager: NSObject, ObservableObject {
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private var pingTimer: Timer?
-    private var reconnectDelay: TimeInterval = 3
+    private var reconnectTimer: Timer?
     private var manualDisconnect = false
+    private var isConnecting = false
+    private var generation = 0          // 连接代次，防止旧连接回调干扰新连接
 
     override private init() {
         super.init()
-        // 恢复已保存的设备ID，否则自动生成
         if let saved = UserDefaults.standard.string(forKey: kDeviceIdKey), !saved.isEmpty {
             deviceId = saved
         } else {
@@ -34,39 +35,57 @@ class WebSocketManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - 连接管理（单飞，防重复）
     func connect() {
-        disconnect()
+        // 已连接或正在连接则跳过
+        if isConnected || isConnecting { return }
+        isConnecting = true
         manualDisconnect = false
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+
+        let gen = generation + 1
+        generation = gen
 
         let urlStr = "ws://\(kServerHost):\(kServerPort)/ws_iphone/\(deviceId)"
         guard let url = URL(string: urlStr) else {
             statusMessage = "URL错误"
+            isConnecting = false
             return
         }
 
-        session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
-        webSocketTask = session?.webSocketTask(with: url)
-        webSocketTask?.resume()
-        receiveMessage()
+        // 清理旧连接（不触发回调风暴）
+        let oldTask = webSocketTask
+        webSocketTask = nil
+        oldTask?.cancel(with: .goingAway, reason: nil)
+
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = true
+        config.timeoutIntervalForRequest = 30
+        session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        let task = session?.webSocketTask(with: url)
+        webSocketTask = task
+        task?.resume()
+        receiveMessage(gen)
 
         statusMessage = "连接中..."
         addLog("连接服务器: \(urlStr)")
 
-        // 心跳
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: true) { [weak self] _ in
-            guard let self = self, !self.manualDisconnect else { return }
-            self.webSocketTask?.sendPing { error in
-                if let error = error {
-                    print("[AiLive] Ping失败: \(error)")
-                }
-            }
+        // 心跳：应用层 JSON ping（服务器支持 {"type":"ping"} → pong）
+        pingTimer?.invalidate()
+        pingTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            self?.sendPing()
         }
     }
 
     func disconnect() {
         manualDisconnect = true
+        isConnecting = false
+        generation += 1
         pingTimer?.invalidate()
         pingTimer = nil
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
         session?.invalidateAndCancel()
@@ -75,14 +94,25 @@ class WebSocketManager: NSObject, ObservableObject {
         statusMessage = "已断开"
     }
 
-    private func receiveMessage() {
+    private func sendPing() {
+        guard isConnected, let task = webSocketTask else { return }
+        let payload: [String: Any] = ["type": "ping", "ts": Date().timeIntervalSince1970]
+        if let d = try? JSONSerialization.data(withJSONObject: payload),
+           let s = String(data: d, encoding: .utf8) {
+            task.send(.string(s)) { _ in }
+        }
+    }
+
+    // MARK: - 接收
+    private func receiveMessage(_ gen: Int) {
         webSocketTask?.receive { [weak self] result in
             guard let self = self else { return }
+            // 旧代次的回调直接丢弃
+            guard gen == self.generation else { return }
             switch result {
             case .success(let message):
                 switch message {
                 case .data(let data):
-                    // 音频数据 → 入队播放
                     AudioPlayerService.shared.enqueueAudio(data)
                     self.addLog("▶ 音频 (\(data.count) 字节)")
                 case .string(let text):
@@ -90,16 +120,26 @@ class WebSocketManager: NSObject, ObservableObject {
                 @unknown default:
                     break
                 }
-                self.receiveMessage()
+                self.receiveMessage(gen)
 
             case .failure(let error):
                 print("[AiLive] 接收失败: \(error)")
-                self.isConnected = false
-                self.statusMessage = "断线，\(Int(self.reconnectDelay))秒后重连"
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.reconnectDelay) {
-                    if !self.manualDisconnect { self.connect() }
+                // 只有非手动断开才重连
+                if !self.manualDisconnect {
+                    self.scheduleReconnect()
                 }
             }
+        }
+    }
+
+    private func scheduleReconnect() {
+        isConnected = false
+        isConnecting = false
+        reconnectTimer?.invalidate()
+        statusMessage = "断线，3秒后重连"
+        addLog("❌ 连接断开，3秒后重连")
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            self?.connect()
         }
     }
 
@@ -157,7 +197,9 @@ class WebSocketManager: NSObject, ObservableObject {
 // MARK: - WebSocket Delegate
 extension WebSocketManager: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        guard webSocketTask === self.webSocketTask else { return }
         isConnected = true
+        isConnecting = false
         statusMessage = "已连接 ✓"
         addLog("✅ WebSocket 已连接")
         // 注册设备信息
@@ -169,12 +211,15 @@ extension WebSocketManager: URLSessionWebSocketDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        // 只有当前任务才算数，手动断开不重连
+        guard let wsTask = task as? URLSessionWebSocketTask,
+              wsTask === self.webSocketTask else { return }
         isConnected = false
-        statusMessage = error != nil ? "连接断开" : "正常断开"
-        addLog("❌ 连接断开")
-        guard !manualDisconnect else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + reconnectDelay) { [weak self] in
-            self?.connect()
+        isConnecting = false
+        if let error = error {
+            addLog("❌ 连接错误: \(error.localizedDescription)")
         }
+        guard !manualDisconnect else { return }
+        scheduleReconnect()
     }
 }

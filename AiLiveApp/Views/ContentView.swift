@@ -181,9 +181,7 @@ struct ContentView: View {
             .navigationTitle("AI直播助手 · 播放端")
         }
         .onAppear {
-            if !wsManager.isConnected {
-                wsManager.connect()
-            }
+            // 连接由 App 入口统一管理（AiLiveApp.swift），这里不再重复调用
         }
     }
 }
