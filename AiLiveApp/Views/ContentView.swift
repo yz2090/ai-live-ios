@@ -228,7 +228,6 @@ struct ContentView: View {
                                 .padding(.trailing, 8)
                             }
                         }
-                        .presentationDetents([.large])
                 }
 
                 // ── 播报历史 ──
