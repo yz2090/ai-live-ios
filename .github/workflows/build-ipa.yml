@@ -1,0 +1,67 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          cd ai-live-ios-app
+          xcodegen generate
+          ls -la
+
+      - name: Build (simulator, 验证编译)
+        run: |
+          cd ai-live-ios-app
+          xcodebuild -project AiLiveApp.xcodeproj \
+            -scheme AiLiveApp \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO build \
+            -quiet
+          echo "✅ Simulator 编译通过"
+
+      - name: Build device (unsigned IPA)
+        run: |
+          cd ai-live-ios-app
+          xcodebuild -project AiLiveApp.xcodeproj \
+            -scheme AiLiveApp \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath build \
+            build \
+            -quiet
+          echo "✅ Device 编译通过"
+
+      - name: Package IPA
+        run: |
+          cd ai-live-ios-app
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -1)
+          echo "APP: $APP_PATH"
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          # 打包未签名 IPA（Sideloadly/AltStore 安装时会自动重签）
+          zip -r -q AiLivePlayer-unsigned.ipa Payload
+          ls -la AiLivePlayer-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiLivePlayer-unsigned.ipa
+          path: ai-live-ios-app/AiLivePlayer-unsigned.ipa
+          retention-days: 14

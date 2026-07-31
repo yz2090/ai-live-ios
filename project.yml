@@ -1,0 +1,25 @@
+name: AiLiveApp
+options:
+  bundleIdPrefix: com.ailive
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  AiLiveApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - AiLiveApp
+    info:
+      path: AiLiveApp/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ailive.player
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_FILE: AiLiveApp/Info.plist
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_VERSION: "5.0"
+        ENABLE_BITCODE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+    scheme:
+      testTargets: []
