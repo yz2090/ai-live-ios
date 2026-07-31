@@ -11,7 +11,7 @@ class WebSocketManager: NSObject, ObservableObject {
     @Published var broadcastHistory: [BroadcastEntry] = []
 
     // 设备ID：首次启动自动生成，用户可查看并填到安卓端
-    @Published var deviceId: String {
+    @Published var deviceId: String = "" {
         didSet {
             UserDefaults.standard.set(deviceId, forKey: kDeviceIdKey)
         }
@@ -24,16 +24,14 @@ class WebSocketManager: NSObject, ObservableObject {
     private var manualDisconnect = false
 
     override private init() {
-        // 先计算设备ID（局部变量，避免 super.init 前访问属性）
-        let savedId: String
-        if let saved = UserDefaults.standard.string(forKey: kDeviceIdKey), !saved.isEmpty {
-            savedId = saved
-        } else {
-            savedId = "iphone_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(14).lowercased()
-            UserDefaults.standard.set(savedId, forKey: kDeviceIdKey)
-        }
         super.init()
-        deviceId = savedId
+        // 恢复已保存的设备ID，否则自动生成
+        if let saved = UserDefaults.standard.string(forKey: kDeviceIdKey), !saved.isEmpty {
+            deviceId = saved
+        } else {
+            deviceId = "iphone_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(14).lowercased()
+            UserDefaults.standard.set(deviceId, forKey: kDeviceIdKey)
+        }
     }
 
     func connect() {
