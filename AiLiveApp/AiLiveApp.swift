@@ -5,6 +5,7 @@ import AVFAudio
 struct AiLiveApp: App {
     @StateObject private var wsManager = WebSocketManager.shared
     @StateObject private var audioPlayer = AudioPlayerService.shared
+    @StateObject private var webCapture = WebCaptureManager.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -12,6 +13,7 @@ struct AiLiveApp: App {
             ContentView()
                 .environmentObject(wsManager)
                 .environmentObject(audioPlayer)
+                .environmentObject(webCapture)
                 .onAppear {
                     // 启动时自动连接
                     wsManager.connect()

@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var wsManager: WebSocketManager
     @EnvironmentObject var audioPlayer: AudioPlayerService
+    @EnvironmentObject var webCapture: WebCaptureManager
 
     var body: some View {
         NavigationView {
@@ -111,6 +112,39 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                 } header: {
                     Label("背景音乐", systemImage: "music.note")
+                }
+
+                // ── 网页采集（百应控制台）──
+                Section {
+                    Toggle("网页采集", isOn: Binding(
+                        get: { webCapture.isRunning },
+                        set: { newVal in
+                            if newVal {
+                                webCapture.start()
+                            } else {
+                                webCapture.stop()
+                            }
+                        }
+                    ))
+                    .tint(.green)
+
+                    InfoRow(label: "状态", value: webCapture.lastStatus)
+                    InfoRow(label: "已抓评论", value: "\(webCapture.capturedCount) 条")
+
+                    if !webCapture.recentLog.isEmpty {
+                        Text(webCapture.recentLog)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.green)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color.black.opacity(0.85))
+                            .cornerRadius(8)
+                    }
+                    Text("启动后会在后台加载百应直播控制台，登录一次直播账号（Cookie自动保存），之后自动抓公屏评论并发送到服务器")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                } header: {
+                    Label("🌐 网页采集", systemImage: "globe")
                 }
 
                 // ── 播报历史 ──

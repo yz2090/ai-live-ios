@@ -117,11 +117,13 @@ class AudioPlayerService: NSObject, ObservableObject {
         guard !audioQueue.isEmpty else {
             isPlayingQueue = false
             isPlaying = false
+            unduckMusic()
             return
         }
         let data = audioQueue.removeFirst()
         isPlayingQueue = true
         isPlaying = true
+        duckMusic()
 
         do {
             player = try AVAudioPlayer(data: data)
@@ -132,8 +134,22 @@ class AudioPlayerService: NSObject, ObservableObject {
             print("[AiLive] ▶ TTS播放 (\(data.count) 字节)")
         } catch {
             print("[AiLive] TTS播放失败: \(error)")
+            unduckMusic()
             playNext()
         }
+    }
+
+    // ── TTS 播报时背景音乐自动降低音量（duck 效果）──
+    private func duckMusic() {
+        guard bgmPlayer?.isPlaying == true else { return }
+        bgmPlayer?.setVolume(musicVolume * 0.2, fadeDuration: 0.3)
+        print("[AiLive] 🎚 背景音乐降低音量 (TTS播报)")
+    }
+
+    private func unduckMusic() {
+        guard bgmPlayer != nil else { return }
+        bgmPlayer?.setVolume(isMuted ? 0 : musicVolume, fadeDuration: 0.5)
+        print("[AiLive] 🎚 背景音乐恢复音量")
     }
 
     func clearQueue() {
@@ -165,6 +181,9 @@ extension AudioPlayerService: AVAudioPlayerDelegate {
             playMusic()
         } else {
             // TTS 播完，播下一条
+            if audioQueue.isEmpty {
+                unduckMusic()
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.playNext()
             }
