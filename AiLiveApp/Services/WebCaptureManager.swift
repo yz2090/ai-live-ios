@@ -34,6 +34,11 @@ class WebCaptureManager: NSObject, ObservableObject {
     var buyinLoginURLForWeb: URL { buyinLoginURL }
 
     // 注入 JS：每1.5秒扫描评论区新增文本，通过 WebKit message handler 回传
+    // 选择器基于百应控制台实测 DOM（2026-08-01）:
+    //   <div class="commentItem-xxx">
+    //     <div class="nickname-xxx"><span class="tag-xxx">主播</span>我：</div>
+    //     <div class="description-xxx">评论内容</div>
+    //   </div>
     private let captureJS = """
     (function() {
         if (window.__capInit) return;
@@ -41,20 +46,23 @@ class WebCaptureManager: NSObject, ObservableObject {
         window.__capSeen = new Set();
         setInterval(function() {
             var texts = [];
-            var nodes = document.querySelectorAll(
-                '[class*="comment"] [class*="content"], ' +
-                '[class*="comment"] [class*="text"], ' +
-                '[class*="danmaku"] [class*="content"], ' +
-                '[class*="danmaku"] [class*="text"], ' +
-                '[class*="chat"] [class*="content"], ' +
-                '[class*="chat"] [class*="text"], ' +
-                '[class*="message"] [class*="content"]'
-            );
-            for (var i = 0; i < nodes.length; i++) {
-                var t = nodes[i].innerText || nodes[i].textContent || '';
+            // 评论条目：commentItem-xxx（hash后缀），内容在 description-xxx
+            var items = document.querySelectorAll('[class*="commentItem"]');
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                // 跳过主播自己的消息
+                if (item.querySelector('[class*="tag"]')) continue;
+                // 找评论内容（description 或直接子文本）
+                var desc = item.querySelector('[class*="description"]');
+                var t = '';
+                if (desc) {
+                    t = desc.innerText || desc.textContent || '';
+                } else {
+                    t = item.innerText || item.textContent || '';
+                }
                 t = t.trim();
                 if (t.length < 2 || t.length > 200) continue;
-                var key = t + '_' + nodes[i].getBoundingClientRect().top.toFixed(0);
+                var key = t + '_' + item.getBoundingClientRect().top.toFixed(0);
                 if (!window.__capSeen.has(key)) {
                     window.__capSeen.add(key);
                     texts.push(t);
