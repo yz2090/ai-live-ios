@@ -193,13 +193,17 @@ struct ContentView: View {
                     InfoRow(label: "已抓评论", value: "\(webCapture.capturedCount) 条")
 
                     if !webCapture.recentLog.isEmpty {
-                        Text(webCapture.recentLog)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundColor(.green)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                            .background(Color.black.opacity(0.85))
-                            .cornerRadius(8)
+                        // 限高 + 内部可滚动（信息多时框内上下滑动）
+                        ScrollView {
+                            Text(webCapture.recentLog)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.green)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                        }
+                        .frame(minHeight: 60, maxHeight: 200)
+                        .background(Color.black.opacity(0.85))
+                        .cornerRadius(8)
                     }
                     Text("启动后会在后台加载百应直播控制台；首次使用请先点「百应登录」扫码登录（Cookie自动保存），之后自动抓公屏评论并发送到服务器")
                         .font(.caption2)
@@ -237,25 +241,32 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                             .font(.caption)
                     } else {
-                        ForEach(wsManager.broadcastHistory) { entry in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack {
-                                    Text(entry.typeLabel)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color(hex: entry.typeColor).opacity(0.15))
-                                        .cornerRadius(4)
-                                    Spacer()
-                                    Text(entry.time)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
+                        // 限高 + 内部可滚动
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 6) {
+                                ForEach(wsManager.broadcastHistory) { entry in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(entry.typeLabel)
+                                                .font(.caption2)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color(hex: entry.typeColor).opacity(0.15))
+                                                .cornerRadius(4)
+                                            Spacer()
+                                            Text(entry.time)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Text(entry.text)
+                                            .font(.subheadline)
+                                    }
+                                    .padding(.vertical, 2)
                                 }
-                                Text(entry.text)
-                                    .font(.subheadline)
                             }
-                            .padding(.vertical, 2)
+                            .padding(4)
                         }
+                        .frame(minHeight: 100, maxHeight: 280)
                     }
                 } header: {
                     HStack {

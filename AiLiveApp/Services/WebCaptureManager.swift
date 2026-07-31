@@ -91,10 +91,16 @@ class WebCaptureManager: NSObject, ObservableObject {
         let websiteDataStore = WKWebsiteDataStore.default()
         config.websiteDataStore = websiteDataStore
 
+        // === MOD: 2026-07-31 强制桌面版浏览器（百应官网只适配电脑浏览器） ===
+        // 用桌面 Safari UA，让百应打开电脑版界面（含评论区，可正常采集）
+        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+        config.applicationNameForUserAgent = desktopUA
+
         webView = WKWebView(frame: .zero, configuration: config)
         webView?.navigationDelegate = self
+        webView?.customUserAgent = desktopUA
         webView?.load(URLRequest(url: buyinURL))
-        addLog("📄 加载百应控制台…")
+        addLog("📄 加载百应控制台（桌面版）…")
 
         // 定时检查状态
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
@@ -172,11 +178,15 @@ class WebCaptureManager: NSObject, ObservableObject {
         if loginWebView == nil {
             let config = WKWebViewConfiguration()
             config.websiteDataStore = WKWebsiteDataStore.default()  // 共享 Cookie
+            // 桌面版 UA（百应只适配电脑浏览器）
+            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+            config.applicationNameForUserAgent = desktopUA
             loginWebView = WKWebView(frame: .zero, configuration: config)
+            loginWebView?.customUserAgent = desktopUA
             loginWebView?.navigationDelegate = self
             loginWebView?.load(URLRequest(url: buyinLoginURL))
         }
-        addLog("🔐 打开百应登录页…")
+        addLog("🔐 打开百应登录页（桌面版）…")
     }
 
     func closeLogin() {
