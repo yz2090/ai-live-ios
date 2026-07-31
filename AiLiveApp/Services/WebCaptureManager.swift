@@ -300,8 +300,13 @@ extension WebCaptureManager: WKScriptMessageHandler {
 // MARK: - WKNavigationDelegate
 extension WebCaptureManager: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        addLog("✅ 页面加载完成，注入抓取JS")
-        injectCaptureJS()
+        // 只对后台采集 WebView 注入抓取 JS（登录页不需要）
+        if webView === self.webView {
+            addLog("✅ 页面加载完成，注入抓取JS")
+            injectCaptureJS()
+        } else {
+            addLog("✅ 登录页加载完成")
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -310,5 +315,52 @@ extension WebCaptureManager: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         addLog("⚠️ 页面连接失败: \(error.localizedDescription)")
+    }
+
+    /// 拦截网页 window.open 新窗口：在当前 WebView 里打开（百应登录用新窗口弹授权页）
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            addLog("🪟 拦截新窗口: \(url.absoluteString.prefix(80))")
+            if isAppScheme(url) {
+                // 抖音/头条唤起协议 → 交给系统打开抖音 App
+                UIApplication.shared.open(url, options: [:]) { ok in
+                    self.addLog(ok ? "📱 已唤起抖音 App" : "⚠️ 无法唤起抖音 App（未安装？）")
+                }
+            } else {
+                // 普通网页 → 在当前 WebView 里打开
+                webView.load(URLRequest(url: url))
+            }
+        }
+        return nil
+    }
+
+    /// 导航策略：拦截自定义协议（抖音唤起等）交给系统处理
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url {
+            let scheme = url.scheme?.lowercased() ?? ""
+            if isAppScheme(url) {
+                addLog("📱 唤起 App: \(scheme)://")
+                UIApplication.shared.open(url, options: [:]) { ok in
+                    self.addLog(ok ? "✅ 已打开抖音" : "⚠️ 无法打开抖音")
+                }
+                decisionHandler(.cancel)
+                return
+            }
+            // 登录成功后可能跳回控制台 URL，记录一下
+            if url.absoluteString.contains("live/control") {
+                self.isLoggedIn = true
+                self.loginDetectCount = 0
+                self.addLog("🎉 已进入直播控制台，登录成功！")
+            }
+        }
+        decisionHandler(.allow)
+    }
+
+    /// 判断是否是抖音系 App 唤起协议
+    private func isAppScheme(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        // 抖音/头条/巨量百应等 App 协议
+        let appSchemes = ["snssdk1128", "aweme", "douyin", "bytewebview", "sslocal", "byteimg"]
+        return appSchemes.contains(scheme)
     }
 }
