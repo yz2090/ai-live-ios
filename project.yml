@@ -45,7 +45,7 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         SWIFT_VERSION: "5.0"
         ENABLE_BITCODE: NO
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     scheme:
       testTargets: []

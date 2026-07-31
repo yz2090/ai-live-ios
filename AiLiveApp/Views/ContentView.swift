@@ -172,6 +172,23 @@ struct ContentView: View {
                     ))
                     .tint(.green)
 
+                    // 登录状态 + 登录按钮
+                    HStack {
+                        Label(
+                            webCapture.isLoggedIn ? "已登录" : "未登录",
+                            systemImage: webCapture.isLoggedIn ? "checkmark.shield.fill" : "exclamationmark.shield.fill"
+                        )
+                        .foregroundColor(webCapture.isLoggedIn ? .green : .orange)
+
+                        Spacer()
+
+                        Button(webCapture.isLoggedIn ? "重新登录" : "百应登录") {
+                            webCapture.openLogin()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.blue)
+                    }
+
                     InfoRow(label: "状态", value: webCapture.lastStatus)
                     InfoRow(label: "已抓评论", value: "\(webCapture.capturedCount) 条")
 
@@ -184,11 +201,34 @@ struct ContentView: View {
                             .background(Color.black.opacity(0.85))
                             .cornerRadius(8)
                     }
-                    Text("启动后会在后台加载百应直播控制台，登录一次直播账号（Cookie自动保存），之后自动抓公屏评论并发送到服务器")
+                    Text("启动后会在后台加载百应直播控制台；首次使用请先点「百应登录」扫码登录（Cookie自动保存），之后自动抓公屏评论并发送到服务器")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 } header: {
                     Label("🌐 网页采集", systemImage: "globe")
+                }
+                .sheet(isPresented: $webCapture.showLoginSheet) {
+                    // 百应登录 WebView
+                    LoginWebView(manager: webCapture)
+                        .ignoresSafeArea()
+                        .overlay(alignment: .top) {
+                            HStack {
+                                Spacer()
+                                Button {
+                                    webCapture.closeLogin()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.title2)
+                                        .foregroundColor(.white)
+                                        .padding(8)
+                                        .background(Color.black.opacity(0.5))
+                                        .clipShape(Circle())
+                                }
+                                .padding(.top, 8)
+                                .padding(.trailing, 8)
+                            }
+                        }
+                        .presentationDetents([.large])
                 }
 
                 // ── 播报历史 ──

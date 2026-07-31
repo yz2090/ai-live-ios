@@ -10,16 +10,25 @@ class WebCaptureManager: NSObject, ObservableObject {
     @Published var lastStatus = "未启动"
     @Published var capturedCount = 0
     @Published var recentLog: String = ""
+    @Published var showLoginSheet = false   // 是否显示登录 WebView
+    @Published var isLoggedIn = false       // 是否已登录（检测到评论区元素）
 
     private var webView: WKWebView?
+    private var loginWebView: WKWebView?   // 登录用可视 WebView（共享Cookie）
     private var deviceId: String = ""
     private var serverHost = kServerHost
     private var serverPort = kServerPort
     private var seenKeys = Set<String>()
     private var timer: Timer?
+    private var loginDetectCount = 0        // 连续检测到未登录的次数
 
     // 百应直播中控台
     private let buyinURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control?btm_ppre=a0.b0.c0.d0&btm_pre=a10091.b089178.c809509.d0&btm_show_id=1ea37d54-1224-4379-b7e3-483630e500c9&pre_universal_page_params_id=&universal_page_params_id=eba566c6-400f-4464-9ebf-dc368e39aa88")!
+
+    // 百应登录页（扫码登录）
+    private let buyinLoginURL = URL(string: "https://buyin.jinritemai.com/dashboard")!
+    // 供登录 WebView 使用的公开登录地址
+    var buyinLoginURLForWeb: URL { buyinLoginURL }
 
     // 注入 JS：每1.5秒扫描评论区新增文本，通过 WebKit message handler 回传
     private let captureJS = """
@@ -112,9 +121,72 @@ class WebCaptureManager: NSObject, ObservableObject {
             if let state = result as? String {
                 self.lastStatus = "页面状态: \(state)"
                 if state == "complete" {
+                    self.checkLoginState()
                     self.injectCaptureJS()
                 }
             }
+        }
+    }
+
+    /// 检测是否已登录：看页面里有没有评论区元素 / 是否跳到了登录页
+    private func checkLoginState() {
+        guard let webView = webView else { return }
+        let js = """
+        (function() {
+            var url = window.location.href;
+            var hasComment = document.querySelectorAll(
+                '[class*="comment"], [class*="danmaku"], [class*="chat"]'
+            ).length > 0;
+            var isLoginPage = url.indexOf('login') > -1 || url.indexOf('passport') > -1 ||
+                document.querySelector('input[type="password"], [class*="qrcode"], [class*="login"]') != null;
+            return JSON.stringify({hasComment: hasComment, isLoginPage: isLoginPage, url: url});
+        })();
+        """
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let self = self else { return }
+            if let s = result as? String, let d = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] {
+                let hasComment = d["hasComment"] as? Bool ?? false
+                let isLoginPage = d["isLoginPage"] as? Bool ?? false
+                if hasComment {
+                    self.isLoggedIn = true
+                    self.loginDetectCount = 0
+                    self.lastStatus = "已登录，采集中"
+                } else if isLoginPage {
+                    self.loginDetectCount += 1
+                    self.isLoggedIn = false
+                    self.lastStatus = "⚠️ 需要登录百应"
+                    if self.loginDetectCount >= 2 && !self.showLoginSheet {
+                        self.addLog("🔐 检测到未登录，请点击「百应登录」扫码登录")
+                    }
+                } else {
+                    // 既没检测到评论区也没检测到登录页：可能页面还在加载或布局变了
+                    self.lastStatus = "等待页面加载…"
+                }
+            }
+        }
+    }
+
+    // MARK: - 登录
+    func openLogin() {
+        showLoginSheet = true
+        if loginWebView == nil {
+            let config = WKWebViewConfiguration()
+            config.websiteDataStore = WKWebsiteDataStore.default()  // 共享 Cookie
+            loginWebView = WKWebView(frame: .zero, configuration: config)
+            loginWebView?.navigationDelegate = self
+            loginWebView?.load(URLRequest(url: buyinLoginURL))
+        }
+        addLog("🔐 打开百应登录页…")
+    }
+
+    func closeLogin() {
+        showLoginSheet = false
+        loginWebView?.stopLoading()
+        loginWebView = nil
+        // 关闭登录后重新检测（可能已登录）
+        loginDetectCount = 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.checkLoginState()
         }
     }
 

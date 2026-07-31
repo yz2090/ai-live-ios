@@ -1,0 +1,41 @@
+import SwiftUI
+import WebKit
+
+// MARK: - 百应登录页（可交互 WebView，共享 Cookie）
+struct LoginWebView: UIViewRepresentable {
+    let manager: WebCaptureManager
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = WKWebsiteDataStore.default()  // 与后台采集共享登录态
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        // 只在首次加载时导航
+        if uiView.url == nil {
+            uiView.load(URLRequest(url: manager.buyinLoginURLForWeb))
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, WKNavigationDelegate {
+        let parent: LoginWebView
+
+        init(_ parent: LoginWebView) {
+            self.parent = parent
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // 登录成功跳转后，可能已进入控制台
+            if let url = webView.url?.absoluteString {
+                print("[AiLive] 登录页导航: \(url)")
+            }
+        }
+    }
+}
