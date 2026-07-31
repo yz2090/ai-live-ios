@@ -12,8 +12,10 @@ class WebCaptureManager: NSObject, ObservableObject {
     @Published var recentLog: String = ""
     @Published var showLoginSheet = false   // 是否显示登录 WebView
     @Published var isLoggedIn = false       // 是否已登录（检测到评论区元素）
+    @Published var loginURL: URL = URL(string: "https://buyin.jinritemai.com")!  // 当前登录页 URL
 
     private var webView: WKWebView?
+    private var orderWebView: WKWebView?   // 订单采集 WebView（compass 大屏）
     private var loginWebView: WKWebView?   // 登录用可视 WebView（共享Cookie）
     private var deviceId: String = ""
     private var serverHost = kServerHost
@@ -21,6 +23,9 @@ class WebCaptureManager: NSObject, ObservableObject {
     private var seenKeys = Set<String>()
     private var timer: Timer?
     var loginDetectCount = 0        // 连续检测到未登录的次数
+    @Published var orderCapturedCount = 0   // 已抓订单数
+    @Published var orderLastInfo = ""      // 最后一条订单信息
+    private var seenOrderIds = Set<String>()  // 已见过的订单号
 
     // 百应直播中控台（登录后自动跳转到这里采集）
     private let buyinConsoleURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control?btm_ppre=a0.b0.c0.d0&btm_pre=a10091.b089178.c809509.d0&btm_show_id=1ea37d54-1224-4379-b7e3-483630e500c9&pre_universal_page_params_id=&universal_page_params_id=eba566c6-400f-4464-9ebf-dc368e39aa88")!
@@ -32,6 +37,47 @@ class WebCaptureManager: NSObject, ObservableObject {
     private let buyinLoginURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
     // 供登录 WebView 使用的公开登录地址
     var buyinLoginURLForWeb: URL { buyinLoginURL }
+
+    // 巨量百应数据大屏（订单采集）：登录后能看到直播实时订单
+    // 实测接口: compass_api/content_live/author/live_screen/live_order?room_id=XXX&order_status=3&page_no=1&page_size=4
+    private let compassURL = URL(string: "https://compass.jinritemai.com/screen/talent/main?live_room_id=7668676207549991720&live_app_id=1128")!
+
+    // 订单采集 JS：每2.5秒轮询 live_order 接口，发现新订单回传
+    // 实测接口返回（2026-08-01）:
+    //   {"data":{"order_list":[{"item_num":1,"nick_name":"🎧***","order_amount":{"value":881},
+    //     "order_id":"6928387...","order_status":3,"order_ts":1785517022,
+    //     "product_title":"企鹅公道杯...","sku_product_title":"蓝把鹰嘴公杯加厚350ml"}],
+    //     "page_result":{"page_no":1,"page_size":4,"total":21}}}
+    private let orderJS = """
+    (function() {
+        if (window.__orderInit) return;
+        window.__orderInit = true;
+        window.__orderSeen = new Set();
+        var roomId = '7668676207549991720';
+        function poll() {
+            fetch('https://compass.jinritemai.com/compass_api/content_live/author/live_screen/live_order?room_id=' + roomId + '&order_status=3&page_no=1&page_size=4', {
+                credentials: 'include'
+            }).then(function(r) { return r.json(); }).then(function(d) {
+                var list = (d.data && d.data.order_list) || [];
+                var fresh = [];
+                for (var i = 0; i < list.length; i++) {
+                    var o = list[i];
+                    if (!o.order_id) continue;
+                    if (window.__orderSeen.has(o.order_id)) continue;
+                    window.__orderSeen.add(o.order_id);
+                    fresh.push(o);
+                }
+                if (fresh.length > 0) {
+                    try {
+                        window.webkit.messageHandlers.orderBridge.postMessage(JSON.stringify(fresh));
+                    } catch(e) {}
+                }
+            }).catch(function(e) {});
+        }
+        setInterval(poll, 2500);
+        setTimeout(poll, 1500);
+    })();
+    """
 
     // 注入 JS：每1.5秒扫描评论区新增文本，通过 WebKit message handler 回传
     // 选择器基于百应控制台实测 DOM（2026-08-01）:
@@ -113,10 +159,29 @@ class WebCaptureManager: NSObject, ObservableObject {
         webView?.load(URLRequest(url: buyinURL))
         addLog("📄 加载百应控制台（桌面版）…")
 
+        // === 订单采集 WebView（compass 大屏）===
+        startOrderCapture(desktopUA: desktopUA)
+
         // 定时检查状态
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.checkStatus()
         }
+    }
+
+    /// 启动订单采集：加载 compass 大屏页，注入订单轮询 JS
+    private func startOrderCapture(desktopUA: String) {
+        let config = WKWebViewConfiguration()
+        let userContentController = WKUserContentController()
+        userContentController.add(self, name: "orderBridge")
+        config.userContentController = userContentController
+        config.websiteDataStore = WKWebsiteDataStore.default()  // 共享 Cookie
+        config.applicationNameForUserAgent = desktopUA
+
+        orderWebView = WKWebView(frame: .zero, configuration: config)
+        orderWebView?.navigationDelegate = self
+        orderWebView?.customUserAgent = desktopUA
+        orderWebView?.load(URLRequest(url: compassURL))
+        addLog("📄 加载巨量百应大屏（订单采集）…")
     }
 
     func stop() {
@@ -128,6 +193,10 @@ class WebCaptureManager: NSObject, ObservableObject {
         webView?.stopLoading()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "capBridge")
         webView = nil
+        // 订单 WebView 也停
+        orderWebView?.stopLoading()
+        orderWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "orderBridge")
+        orderWebView = nil
         addLog("🛑 网页采集停止")
     }
 
@@ -140,6 +209,31 @@ class WebCaptureManager: NSObject, ObservableObject {
                 if state == "complete" {
                     self.checkLoginState()
                     self.injectCaptureJS()
+                }
+            }
+        }
+        // 检查订单 WebView 状态（compass 大屏）
+        if let orderWebView = orderWebView {
+            orderWebView.evaluateJavaScript("document.readyState") { [weak self] result, _ in
+                guard let self = self else { return }
+                if let state = result as? String, state == "complete" {
+                    // 检查 compass 是否已登录：页面是否包含订单数据区
+                    let js = """
+                    (function() {
+                        var url = window.location.href;
+                        var hasLogin = url.indexOf('login') > -1 || url.indexOf('passport') > -1;
+                        var hasOrderData = document.querySelectorAll('[class*="order"], [class*="core_data"]').length > 0;
+                        return JSON.stringify({hasLogin: hasLogin, hasOrderData: hasOrderData, url: url});
+                    })();
+                    """
+                    orderWebView.evaluateJavaScript(js) { result2, _ in
+                        if let s = result2 as? String, let d = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] {
+                            let hasLogin = d["hasLogin"] as? Bool ?? false
+                            if hasLogin {
+                                self.addLog("⚠️ 大屏未登录，点「订单登录」扫码")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -199,6 +293,7 @@ class WebCaptureManager: NSObject, ObservableObject {
 
     // MARK: - 登录
     func openLogin() {
+        loginURL = buyinLoginURL
         showLoginSheet = true
         if loginWebView == nil {
             let config = WKWebViewConfiguration()
@@ -212,6 +307,23 @@ class WebCaptureManager: NSObject, ObservableObject {
             loginWebView?.load(URLRequest(url: buyinLoginURL))
         }
         addLog("🔐 打开百应登录页（桌面版）…")
+    }
+
+    /// 打开 compass 大屏登录（订单采集需要独立登录）
+    func openOrderLogin() {
+        loginURL = compassURL
+        showLoginSheet = true
+        if loginWebView == nil {
+            let config = WKWebViewConfiguration()
+            config.websiteDataStore = WKWebsiteDataStore.default()
+            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+            config.applicationNameForUserAgent = desktopUA
+            loginWebView = WKWebView(frame: .zero, configuration: config)
+            loginWebView?.customUserAgent = desktopUA
+            loginWebView?.navigationDelegate = self
+            loginWebView?.load(URLRequest(url: compassURL))
+        }
+        addLog("🔐 打开巨量百应大屏登录（订单采集）…")
     }
 
     func closeLogin() {
@@ -300,6 +412,58 @@ class WebCaptureManager: NSObject, ObservableObject {
         }.resume()
     }
 
+    // MARK: - 订单处理：解析 JSON → 格式化 → POST 服务器
+    private func handleOrders(_ jsonStr: String) {
+        guard let data = jsonStr.data(using: .utf8),
+              let orders = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            addLog("⚠️ 订单解析失败")
+            return
+        }
+        for o in orders {
+            let nick = o["nick_name"] as? String ?? ""
+            let product = o["sku_product_title"] as? String ?? (o["product_title"] as? String ?? "")
+            let amount = (o["order_amount"] as? [String: Any])?["value"] as? Double ?? 0
+
+            // 格式化为服务器认识的文本：{昵称}下单{商品}
+            // 服务器 parse_order 会提取昵称和商品，生成点名感谢
+            let text = "\(nick)下单\(product)"
+            orderCapturedCount += 1
+            orderLastInfo = "\(nick) 下单 \(product) ¥\(Int(amount))"
+            addLog("🛒 \(nick) 下单 \(product) ¥\(Int(amount))")
+            postOrderToServer(nick: nick, product: product, amount: amount)
+        }
+    }
+
+    /// 订单 POST：直接带结构化数据，服务器生成感谢语
+    private func postOrderToServer(nick: String, product: String, amount: Double) {
+        let urlStr = "http://\(serverHost):\(serverPort)/api/say"
+        guard let url = URL(string: urlStr) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10
+
+        let json: [String: Any] = [
+            "phone_id": deviceId,
+            "text": "\(nick)下单\(product)",
+            "type": "order",
+            "nick": nick,
+            "product": product,
+            "amount": amount
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: json)
+
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            if let error = error {
+                self?.addLog("❌ 订单发送失败: \(error.localizedDescription)")
+                return
+            }
+            if let http = response as? HTTPURLResponse {
+                self?.addLog("📤 订单已发送 -> \(http.statusCode)")
+            }
+        }.resume()
+    }
+
     func addLog(_ msg: String) {
         let fmt = DateFormatter()
         fmt.dateFormat = "HH:mm:ss"
@@ -316,15 +480,29 @@ class WebCaptureManager: NSObject, ObservableObject {
 // MARK: - WKScriptMessageHandler：JS 评论回传
 extension WebCaptureManager: WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "capBridge",
-              let text = message.body as? String else { return }
-        handleComments(text)
+        if message.name == "capBridge", let text = message.body as? String {
+            handleComments(text)
+        } else if message.name == "orderBridge", let jsonStr = message.body as? String {
+            handleOrders(jsonStr)
+        }
     }
 }
 
 // MARK: - WKNavigationDelegate
 extension WebCaptureManager: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // 订单 WebView（compass 大屏）：加载完成注入订单轮询 JS
+        if webView === self.orderWebView {
+            addLog("📊 大屏页加载完成，注入订单轮询JS")
+            webView.evaluateJavaScript(orderJS) { [weak self] _, error in
+                if let error = error {
+                    self?.addLog("⚠️ 订单JS注入失败: \(error.localizedDescription)")
+                } else {
+                    self?.addLog("✅ 订单抓取JS已注入")
+                }
+            }
+            return
+        }
         // 只对后台采集 WebView 注入抓取 JS（登录页不需要）
         if webView === self.webView {
             // 加载完成后检测登录状态：已登录自动跳控制台，未登录停在登录页

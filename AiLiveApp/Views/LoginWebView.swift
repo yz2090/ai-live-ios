@@ -4,6 +4,7 @@ import WebKit
 // MARK: - 百应登录页（可交互 WebView，共享 Cookie）
 struct LoginWebView: UIViewRepresentable {
     let manager: WebCaptureManager
+    var url: URL? = nil   // 可指定登录哪个页面（buyin 或 compass）
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -20,7 +21,7 @@ struct LoginWebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {
         // 只在首次加载时导航
         if uiView.url == nil {
-            uiView.load(URLRequest(url: manager.buyinLoginURLForWeb))
+            uiView.load(URLRequest(url: url ?? manager.buyinLoginURLForWeb))
         }
     }
 
@@ -44,6 +45,10 @@ struct LoginWebView: UIViewRepresentable {
                     parent.manager.isLoggedIn = true
                     parent.manager.loginDetectCount = 0
                     parent.manager.addLog("🎉 登录成功！Cookie 已保存，可开始采集")
+                }
+                // compass 大屏页加载成功 = 订单采集可用
+                if url.contains("compass.jinritemai.com/screen") {
+                    parent.manager.addLog("📊 大屏已登录，订单采集可用")
                 }
             }
         }

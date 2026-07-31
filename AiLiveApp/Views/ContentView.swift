@@ -182,15 +182,25 @@ struct ContentView: View {
 
                         Spacer()
 
-                        Button(webCapture.isLoggedIn ? "重新登录" : "百应登录") {
+                        Button(webCapture.isLoggedIn ? "重新登录" : "评论登录") {
                             webCapture.openLogin()
                         }
                         .buttonStyle(.bordered)
                         .tint(.blue)
+
+                        Button("订单登录") {
+                            webCapture.openOrderLogin()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.purple)
                     }
 
                     InfoRow(label: "状态", value: webCapture.lastStatus)
                     InfoRow(label: "已抓评论", value: "\(webCapture.capturedCount) 条")
+                    InfoRow(label: "已抓订单", value: "\(webCapture.orderCapturedCount) 单")
+                    if !webCapture.orderLastInfo.isEmpty {
+                        InfoRow(label: "最新订单", value: webCapture.orderLastInfo)
+                    }
 
                     if !webCapture.recentLog.isEmpty {
                         // 限高 + 内部可滚动（信息多时框内上下滑动）
@@ -205,15 +215,15 @@ struct ContentView: View {
                         .background(Color.black.opacity(0.85))
                         .cornerRadius(8)
                     }
-                    Text("启动后会在后台加载百应直播控制台；首次使用请先点「百应登录」扫码登录（Cookie自动保存），之后自动抓公屏评论并发送到服务器")
+                    Text("启动后会在后台加载百应直播控制台抓评论 + 巨量百应大屏抓订单；首次使用请先点「百应登录」扫码登录（Cookie自动保存）。登录一次 buyin 和 compass 都需要，大屏页也要登录一次才能抓订单")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 } header: {
                     Label("🌐 网页采集", systemImage: "globe")
                 }
                 .sheet(isPresented: $webCapture.showLoginSheet) {
-                    // 百应登录 WebView
-                    LoginWebView(manager: webCapture)
+                    // 百应登录 WebView（buyin 或 compass）
+                    LoginWebView(manager: webCapture, url: webCapture.loginURL)
                         .ignoresSafeArea()
                         .overlay(alignment: .top) {
                             HStack {
