@@ -22,11 +22,14 @@ class WebCaptureManager: NSObject, ObservableObject {
     private var timer: Timer?
     var loginDetectCount = 0        // 连续检测到未登录的次数
 
-    // 百应直播中控台
-    private let buyinURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control?btm_ppre=a0.b0.c0.d0&btm_pre=a10091.b089178.c809509.d0&btm_show_id=1ea37d54-1224-4379-b7e3-483630e500c9&pre_universal_page_params_id=&universal_page_params_id=eba566c6-400f-4464-9ebf-dc368e39aa88")!
+    // 百应直播中控台（登录后自动跳转到这里采集）
+    private let buyinConsoleURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control?btm_ppre=a0.b0.c0.d0&btm_pre=a10091.b089178.c809509.d0&btm_show_id=1ea37d54-1224-4379-b7e3-483630e500c9&pre_universal_page_params_id=&universal_page_params_id=eba566c6-400f-4464-9ebf-dc368e39aa88")!
+
+    // 首次加载页面：达人工作台登录页（用户提供，type=24）
+    private let buyinURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
 
     // 百应登录页（扫码登录）
-    private let buyinLoginURL = URL(string: "https://buyin.jinritemai.com/dashboard")!
+    private let buyinLoginURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
     // 供登录 WebView 使用的公开登录地址
     var buyinLoginURLForWeb: URL { buyinLoginURL }
 
@@ -153,7 +156,10 @@ class WebCaptureManager: NSObject, ObservableObject {
             if let s = result as? String, let d = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] {
                 let hasComment = d["hasComment"] as? Bool ?? false
                 let isLoginPage = d["isLoginPage"] as? Bool ?? false
+                let currentURL = d["url"] as? String ?? ""
+
                 if hasComment {
+                    // 已登录且在控制台 → 正常采集
                     self.isLoggedIn = true
                     self.loginDetectCount = 0
                     self.lastStatus = "已登录，采集中"
@@ -164,12 +170,23 @@ class WebCaptureManager: NSObject, ObservableObject {
                     if self.loginDetectCount >= 2 && !self.showLoginSheet {
                         self.addLog("🔐 检测到未登录，请点击「百应登录」扫码登录")
                     }
+                } else if !currentURL.contains("live/control") && !self.isLoggedIn {
+                    // 已登录但不在控制台（比如登录成功后停在登录页/首页）→ 自动跳转控制台
+                    self.addLog("🔁 已登录，自动跳转直播控制台…")
+                    self.loadConsole()
                 } else {
                     // 既没检测到评论区也没检测到登录页：可能页面还在加载或布局变了
                     self.lastStatus = "等待页面加载…"
                 }
             }
         }
+    }
+
+    /// 跳转到直播控制台（采集页）
+    func loadConsole() {
+        guard let webView = webView else { return }
+        webView.load(URLRequest(url: buyinConsoleURL))
+        addLog("📄 加载直播控制台…")
     }
 
     // MARK: - 登录
@@ -302,8 +319,25 @@ extension WebCaptureManager: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // 只对后台采集 WebView 注入抓取 JS（登录页不需要）
         if webView === self.webView {
-            addLog("✅ 页面加载完成，注入抓取JS")
-            injectCaptureJS()
+            // 加载完成后检测登录状态：已登录自动跳控制台，未登录停在登录页
+            if let url = webView.url?.absoluteString {
+                if url.contains("login") || url.contains("passport") {
+                    addLog("🔐 当前在登录页（未登录或等待登录）")
+                    self.isLoggedIn = false
+                    self.lastStatus = "⚠️ 请先登录百应"
+                } else if url.contains("live/control") {
+                    addLog("✅ 已在直播控制台，注入抓取JS")
+                    self.isLoggedIn = true
+                    self.loginDetectCount = 0
+                    injectCaptureJS()
+                } else {
+                    // 其他页面（如登录成功后的跳转页）→ 等几秒再检测，已登录则跳控制台
+                    addLog("✅ 页面加载完成: \(url.prefix(60))")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        self?.checkLoginState()
+                    }
+                }
+            }
         } else {
             addLog("✅ 登录页加载完成")
         }
