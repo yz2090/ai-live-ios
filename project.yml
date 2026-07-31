@@ -29,6 +29,8 @@ targets:
         UIBackgroundModes:
           - audio
           - fetch
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UIRequiredDeviceCapabilities:
           - arm64
         UISupportedInterfaceOrientations:

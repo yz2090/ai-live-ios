@@ -8,6 +8,8 @@ class AudioPlayerService: NSObject, ObservableObject {
 
     @Published var isPlaying = false
     @Published var isMusicPlaying = false
+    @Published var currentMusicIndex = 0      // 当前播放的音乐序号
+    @Published var musicFiles: [URL] = []      // 背景音乐列表（来自App沙盒Music目录）
     @Published var ttsVolume: Float {
         didSet { UserDefaults.standard.set(ttsVolume, forKey: "ailive_tts_volume") }
     }
@@ -24,7 +26,11 @@ class AudioPlayerService: NSObject, ObservableObject {
     private var audioQueue: [Data] = []          // TTS 音频队列
     private var isPlayingQueue = false
     private var musicIndex = 0
-    private var musicFiles: [URL] = []
+
+    private var musicDirectory: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent("Music", isDirectory: true)
+    }
 
     override private init() {
         let savedTts = UserDefaults.standard.object(forKey: "ailive_tts_volume") as? Float ?? 1.0
@@ -33,7 +39,7 @@ class AudioPlayerService: NSObject, ObservableObject {
         musicVolume = savedMusic
         super.init()
         setupAudioSession()
-        loadBundledMusic()
+        loadMusicFromDocuments()
     }
 
     private func setupAudioSession() {
@@ -48,16 +54,48 @@ class AudioPlayerService: NSObject, ObservableObject {
         }
     }
 
-    // ── 背景音乐：从 App Bundle 加载内置音乐 ──
-    private func loadBundledMusic() {
-        musicFiles = []
-        if let urls = Bundle.main.urls(forResourcesWithExtension: "mp3", subdirectory: nil) {
-            musicFiles = urls.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    // ── 背景音乐：从 App 沙盒 Music 目录扫描（用户通过文件App导入）──
+    private func loadMusicFromDocuments() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
+        guard let files = try? fm.contentsOfDirectory(at: musicDirectory, includingPropertiesForKeys: nil) else {
+            musicFiles = []
+            return
         }
-        if let urls = Bundle.main.urls(forResourcesWithExtension: "m4a", subdirectory: nil) {
-            musicFiles += urls.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let audioExts = ["mp3", "m4a", "wav", "aac", "flac", "caf"]
+        musicFiles = files
+            .filter { audioExts.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        print("[AiLive] 背景音乐 \(musicFiles.count) 首: \(musicFiles.map { $0.lastPathComponent })")
+    }
+
+    /// 从文件App导入音乐（复制到沙盒Music目录，持久保存）
+    func importMusic(from url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+
+        let fm = FileManager.default
+        try? fm.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
+        let dest = musicDirectory.appendingPathComponent(url.lastPathComponent)
+        try? fm.removeItem(at: dest)  // 重名覆盖
+        do {
+            try fm.copyItem(at: url, to: dest)
+            loadMusicFromDocuments()
+            print("[AiLive] 🎵 已导入音乐: \(url.lastPathComponent)")
+        } catch {
+            print("[AiLive] 导入音乐失败: \(error)")
         }
-        print("[AiLive] 内置音乐 \(musicFiles.count) 首: \(musicFiles.map { $0.lastPathComponent })")
+    }
+
+    /// 删除一首音乐（正在播放则停止）
+    func removeMusic(at index: Int) {
+        guard index < musicFiles.count else { return }
+        let url = musicFiles[index]
+        if bgmPlayer?.url?.standardizedFileURL == url.standardizedFileURL {
+            stopMusic()
+        }
+        try? FileManager.default.removeItem(at: url)
+        loadMusicFromDocuments()
     }
 
     func startMusic() {
@@ -71,6 +109,7 @@ class AudioPlayerService: NSObject, ObservableObject {
         guard !musicFiles.isEmpty else { return }
         if musicIndex >= musicFiles.count { musicIndex = 0 }
         let url = musicFiles[musicIndex]
+        currentMusicIndex = musicIndex
         do {
             bgmPlayer = try AVAudioPlayer(contentsOf: url)
             bgmPlayer?.delegate = self

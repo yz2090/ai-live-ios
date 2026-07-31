@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject var wsManager: WebSocketManager
     @EnvironmentObject var audioPlayer: AudioPlayerService
     @EnvironmentObject var webCapture: WebCaptureManager
+    @State private var showMusicPicker = false
 
     var body: some View {
         NavigationView {
@@ -94,20 +95,63 @@ struct ContentView: View {
 
                 // ── 背景音乐 ──
                 Section {
-                    HStack {
-                        Button(audioPlayer.isMusicPlaying ? "⏸ 暂停音乐" : "▶ 播放音乐") {
-                            audioPlayer.toggleMusic()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.brown)
-
-                        Button("⏭ 切歌") {
-                            audioPlayer.nextMusic()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!audioPlayer.isMusicPlaying)
+                    Button {
+                        showMusicPicker = true
+                    } label: {
+                        Label("从文件选择音乐", systemImage: "folder")
                     }
-                    Text("音乐文件内置在App中，长按App图标可查看文件列表")
+                    .fileImporter(
+                        isPresented: $showMusicPicker,
+                        allowedContentTypes: [.audio],
+                        allowsMultipleSelection: true
+                    ) { result in
+                        if case .success(let urls) = result {
+                            for url in urls {
+                                audioPlayer.importMusic(from: url)
+                            }
+                        }
+                    }
+
+                    if audioPlayer.musicFiles.isEmpty {
+                        Text("还没有音乐，点击上方按钮从文件App导入")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(Array(audioPlayer.musicFiles.enumerated()), id: \.offset) { index, url in
+                            HStack {
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.brown)
+                                Text(url.lastPathComponent)
+                                    .lineLimit(1)
+                                Spacer()
+                                if audioPlayer.isMusicPlaying && index == audioPlayer.currentMusicIndex {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .foregroundColor(.green)
+                                }
+                                Button {
+                                    audioPlayer.removeMusic(at: index)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .foregroundColor(.red)
+                                }
+                            }
+                        }
+
+                        HStack {
+                            Button(audioPlayer.isMusicPlaying ? "⏸ 暂停" : "▶ 播放") {
+                                audioPlayer.toggleMusic()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.brown)
+
+                            Button("⏭ 下一首") {
+                                audioPlayer.nextMusic()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!audioPlayer.isMusicPlaying)
+                        }
+                    }
+                    Text("音乐文件保存在App内，导入后离线可用；AI说话时音乐自动降低音量")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 } header: {
