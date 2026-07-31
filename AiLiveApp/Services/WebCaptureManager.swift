@@ -20,7 +20,7 @@ class WebCaptureManager: NSObject, ObservableObject {
     private var serverPort = kServerPort
     private var seenKeys = Set<String>()
     private var timer: Timer?
-    private var loginDetectCount = 0        // 连续检测到未登录的次数
+    var loginDetectCount = 0        // 连续检测到未登录的次数
 
     // 百应直播中控台
     private let buyinURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control?btm_ppre=a0.b0.c0.d0&btm_pre=a10091.b089178.c809509.d0&btm_show_id=1ea37d54-1224-4379-b7e3-483630e500c9&pre_universal_page_params_id=&universal_page_params_id=eba566c6-400f-4464-9ebf-dc368e39aa88")!
@@ -275,7 +275,7 @@ class WebCaptureManager: NSObject, ObservableObject {
         }.resume()
     }
 
-    private func addLog(_ msg: String) {
+    func addLog(_ msg: String) {
         let fmt = DateFormatter()
         fmt.dateFormat = "HH:mm:ss"
         let ts = fmt.string(from: Date())
