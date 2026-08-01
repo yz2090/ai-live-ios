@@ -232,9 +232,9 @@ class WebCaptureManager: NSObject, ObservableObject {
         config.userContentController = userContentController
         config.websiteDataStore = WKWebsiteDataStore.default()  // Cookie 持久化（登录态）
 
-        // 强制桌面版浏览器（百应只适配电脑浏览器）
-        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-        config.applicationNameForUserAgent = desktopUA
+        // 强制桌面 Chrome UA（v11.15: 百应大屏对 Safari/WebKit UA 返回"已结束"降级页，必须用 Chrome UA）
+        // 用 customUserAgent 完全替换（applicationNameForUserAgent 只是附加，且与 Safari UA 冲突）
+        let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView?.navigationDelegate = self
