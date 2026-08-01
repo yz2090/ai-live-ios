@@ -60,21 +60,6 @@ struct ContentView: View {
                     Label("设备ID（绑定用）", systemImage: "iphone")
                 }
 
-                // ── 目标手机PID（采集数据归属）──
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField("填安卓手机PID，如 phone_e3ee96400caa1601", text: $wsManager.targetPid)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.callout, design: .monospaced))
-                        Text("采集的评论/订单/核心数据将归属到这台手机（用它的bark_key推送、用它的话术回复）。留空则用本机设备ID")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                } header: {
-                    Label("目标手机PID", systemImage: "target")
-                }
-
                 // ── 声音控制 ──
                 Section {
                     Toggle("静音", isOn: Binding(
