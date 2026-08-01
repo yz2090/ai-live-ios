@@ -68,6 +68,20 @@ class WebCaptureManager: NSObject, ObservableObject {
         var seenComments = {};
         var firstOrders = true;    // 首次拉取：只初始化历史订单，不播报
         var firstComments = true;  // 首次拉取：只初始化历史评论，不播报
+        // v11.14 诊断：记录各接口状态供上报
+        var diag = {
+            roomId: roomId, url: '', pageLoaded: false, loginOk: null,
+            comments: {ok: null, err: '', lastCount: -1},
+            orders: {ok: null, err: '', lastCount: -1},
+            core: {ok: null, err: ''},
+            playinfo: {ok: null, err: '', rid: ''},
+            jumps: 0, initTime: Date.now()
+        };
+        function sendDiag() {
+            diag.roomId = roomId;
+            diag.url = window.location.href.slice(0, 160);
+            postMsg('diag', diag);
+        }
         // 从 URL 动态提取 room_id（换直播间自动跟随）
         function refreshRoomId() {
             var m = window.location.href.match(/live_room_id=(\\d+)/);
@@ -86,16 +100,21 @@ class WebCaptureManager: NSObject, ObservableObject {
                 if (d && d.data) {
                     rid = d.data.room_id || d.data.live_room_id || '';
                 }
+                diag.playinfo = {ok: true, err: '', rid: rid};
                 if (!rid || rid.length < 10) return;
                 var m = window.location.href.match(/live_room_id=(\\d+)/);
                 var cur = m ? m[1] : roomId;
                 if (rid !== cur) {
                     // 新场次/新直播间：跳转到新大屏页（状态重置由页面重载完成）
                     if (roomCheckCount <= 3 || roomCheckCount % 20 === 0) {
+                        diag.jumps++;
                         window.location.href = 'https://compass.jinritemai.com/screen/talent/main?live_room_id=' + rid + '&live_app_id=1128&source=compass_inner';
                     }
                 }
-            }).catch(function(e) {});
+            }).catch(function(e) {
+                diag.playinfo = {ok: false, err: String(e && e.message || e), rid: ''};
+                sendDiag();
+            });
         }
         function postMsg(type, payload) {
             try { window.webkit.messageHandlers.capBridge.postMessage(JSON.stringify({type: type, data: payload})); } catch(e) {}
@@ -106,9 +125,10 @@ class WebCaptureManager: NSObject, ObservableObject {
             fetch('https://compass.jinritemai.com/business_api/author/screen/anchor/live_comment?live_room_id=' + roomId + '&cursor=' + cursor + '&version_code=100&fe_version=1&device_id=7019359764', {
                 credentials: 'include'
             }).then(function(r) { return r.json(); }).then(function(d) {
-                if (!d || !d.data) return;
+                if (!d || !d.data) { diag.comments = {ok: false, err: 'no data', lastCount: -1}; return; }
                 if (d.data.cursor) cursor = d.data.cursor;
                 var list = d.data.comments || [];
+                diag.comments = {ok: true, err: '', lastCount: list.length};
                 var fresh = [];
                 for (var i = 0; i < list.length; i++) {
                     var c = list[i];
@@ -120,7 +140,10 @@ class WebCaptureManager: NSObject, ObservableObject {
                 }
                 firstComments = false;
                 if (fresh.length > 0) postMsg('comments', fresh);
-            }).catch(function(e) {});
+            }).catch(function(e) {
+                diag.comments = {ok: false, err: String(e && e.message || e), lastCount: -1};
+                sendDiag();
+            });
         }
         // 订单：1秒轮询 live_order，order_id 去重
         function pollOrders() {
@@ -128,8 +151,9 @@ class WebCaptureManager: NSObject, ObservableObject {
             fetch('https://compass.jinritemai.com/compass_api/content_live/author/live_screen/live_order?room_id=' + roomId + '&order_status=3&page_no=1&page_size=10', {
                 credentials: 'include'
             }).then(function(r) { return r.json(); }).then(function(d) {
-                if (!d || !d.data || !d.data.order_list) return;
+                if (!d || !d.data || !d.data.order_list) { diag.orders = {ok: false, err: 'no order_list', lastCount: -1}; return; }
                 var list = d.data.order_list;
+                diag.orders = {ok: true, err: '', lastCount: list.length};
                 var fresh = [];
                 for (var i = 0; i < list.length; i++) {
                     var o = list[i];
@@ -140,7 +164,10 @@ class WebCaptureManager: NSObject, ObservableObject {
                 }
                 firstOrders = false;
                 if (fresh.length > 0) postMsg('orders', fresh);
-            }).catch(function(e) {});
+            }).catch(function(e) {
+                diag.orders = {ok: false, err: String(e && e.message || e), lastCount: -1};
+                sendDiag();
+            });
         }
         // 核心数据：5分钟 base_info
         function pollCore() {
@@ -148,18 +175,24 @@ class WebCaptureManager: NSObject, ObservableObject {
             fetch('https://compass.jinritemai.com/compass_api/author/live/basic_live_screen/base_info?room_id=' + roomId, {
                 credentials: 'include'
             }).then(function(r) { return r.json(); }).then(function(d) {
-                if (!d || !d.data) return;
+                if (!d || !d.data) { diag.core = {ok: false, err: 'no data'}; return; }
+                diag.core = {ok: true, err: ''};
                 postMsg('core', d.data);
-            }).catch(function(e) {});
+            }).catch(function(e) {
+                diag.core = {ok: false, err: String(e && e.message || e)};
+                sendDiag();
+            });
         }
         setInterval(pollComments, 1000);
         setInterval(pollOrders, 1000);
         setInterval(pollCore, 300000);
         setInterval(pollRoom, 60000);
+        setInterval(sendDiag, 10000);
         setTimeout(pollComments, 500);
         setTimeout(pollOrders, 800);
         setTimeout(pollCore, 1500);
         setTimeout(pollRoom, 3000);
+        setTimeout(function(){ diag.pageLoaded = true; sendDiag(); }, 8000);
     })();
     """
 
@@ -400,9 +433,24 @@ class WebCaptureManager: NSObject, ObservableObject {
         }.resume()
     }
 
+    /// 诊断上报：POST 到服务器 /api/diag（v11.14）
+    private func postDiagToServer(_ diag: [String: Any]) {
+        let urlStr = "http://\(serverHost):\(serverPort)/api/diag"
+        guard let url = URL(string: urlStr) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 8
+        let json: [String: Any] = [
+            "phone_id": deviceId,
+            "diag": diag
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: json)
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
     /// 核心数据走服务器推送（服务器有 bark_key 配置）
-    private func postToServerCoreData(_ text: String) {
-        let urlStr = "http://\(serverHost):\(serverPort)/api/say"
+    private func postToServerCoreData(_ text: String) {        let urlStr = "http://\(serverHost):\(serverPort)/api/say"
         guard let url = URL(string: urlStr) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -609,6 +657,10 @@ extension WebCaptureManager: WKScriptMessageHandler {
         case "core":
             if let core = obj["data"] as? [String: Any] {
                 handleCoreData(core)
+            }
+        case "diag":
+            if let diag = obj["data"] as? [String: Any] {
+                postDiagToServer(diag)
             }
         default:
             break
