@@ -5,7 +5,6 @@ struct ContentView: View {
     @EnvironmentObject var wsManager: WebSocketManager
     @EnvironmentObject var audioPlayer: AudioPlayerService
     @EnvironmentObject var webCapture: WebCaptureManager
-    @State private var showMusicPicker = false
 
     var body: some View {
         NavigationView {
@@ -96,16 +95,11 @@ struct ContentView: View {
                 // ── 背景音乐 ──
                 Section {
                     Button {
-                        showMusicPicker = true
-                    } label: {
-                        Label("从文件选择音乐", systemImage: "folder")
-                    }
-                    .fileImporter(
-                        isPresented: $showMusicPicker,
-                        allowedContentTypes: [.item],  // iOS15 用 .item 更稳，避免 .audio 不弹窗
-                        allowsMultipleSelection: true
-                    ) { result in
-                        if case .success(let urls) = result {
+                        // iOS15 SwiftUI fileImporter 有 bug 不弹窗，改用 UIKit 原生选择器
+                        MusicDocumentPicker.shared.present(
+                            from: UIApplication.topViewController(),
+                            allowedTypes: [.audio, .mp3, .m4a, .wav, .aac, .flac, .caf]
+                        ) { urls in
                             var imported = 0
                             for url in urls {
                                 let ext = url.pathExtension.lowercased()
@@ -116,12 +110,11 @@ struct ContentView: View {
                                 imported += 1
                             }
                             if imported == 0 {
-                                // 没导入任何文件时提示
                                 audioPlayer.lastImportError = "未找到支持的音频文件（mp3/m4a/wav）"
                             }
-                        } else if case .failure(let err) = result {
-                            audioPlayer.lastImportError = "选择失败: \(err.localizedDescription)"
                         }
+                    } label: {
+                        Label("从文件选择音乐", systemImage: "folder")
                     }
 
                     if let errMsg = audioPlayer.lastImportError {
