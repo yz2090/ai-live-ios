@@ -70,6 +70,8 @@ class WebCaptureManager: NSObject, ObservableObject {
         var cursor = '0';
         var seenOrders = {};
         var seenComments = {};
+        var firstOrders = true;    // 首次拉取：只初始化历史订单，不播报
+        var firstComments = true;  // 首次拉取：只初始化历史评论，不播报
         // 从 URL 动态提取 room_id（换直播间自动跟随）
         function refreshRoomId() {
             var m = window.location.href.match(/live_room_id=(\\d+)/);
@@ -93,8 +95,10 @@ class WebCaptureManager: NSObject, ObservableObject {
                     var key = c.comment_id || (c.content || '') + '_' + (c.create_time || '');
                     if (!key || seenComments[key]) continue;
                     seenComments[key] = true;
+                    if (firstComments) continue;  // 首次只标记历史，不播报
                     fresh.push(c);
                 }
+                firstComments = false;
                 if (fresh.length > 0) postMsg('comments', fresh);
             }).catch(function(e) {});
         }
@@ -111,8 +115,10 @@ class WebCaptureManager: NSObject, ObservableObject {
                     var o = list[i];
                     if (!o.order_id || seenOrders[o.order_id]) continue;
                     seenOrders[o.order_id] = true;
+                    if (firstOrders) continue;  // 首次只标记历史，不播报
                     fresh.push(o);
                 }
+                firstOrders = false;
                 if (fresh.length > 0) postMsg('orders', fresh);
             }).catch(function(e) {});
         }
@@ -287,7 +293,8 @@ class WebCaptureManager: NSObject, ObservableObject {
     }
 
     private func handleOrders(_ list: [[String: Any]]) {
-        for o in list {
+        // list 是接口倒序（最新在前），第一条即最新订单
+        for (idx, o) in list.enumerated() {
             guard let orderId = o["order_id"] as? String else { continue }
             if seenOrderIds.contains(orderId) { continue }
             seenOrderIds.insert(orderId)
@@ -301,7 +308,10 @@ class WebCaptureManager: NSObject, ObservableObject {
             let amount = amountFen / 100.0
 
             orderCapturedCount += 1
-            orderLastInfo = "\(nick) 下单 \(product) ¥\(String(format: "%.2f", amount))"
+            // 只更新最新订单显示（第一条），避免被列表后面的旧订单覆盖
+            if idx == 0 {
+                orderLastInfo = "\(nick) 下单 \(product) ¥\(String(format: "%.2f", amount))"
+            }
             addLog("🛒 \(nick) 下单 \(product) ¥\(String(format: "%.2f", amount))")
             postOrderToServer(nick: nick, product: product, amount: amount)
         }

@@ -285,7 +285,7 @@ struct ContentView: View {
                             }
                             .padding(4)
                         }
-                        .frame(minHeight: 100, maxHeight: 280)
+                        .frame(height: 240)  // 固定高度，内容多时内部滚动
                     }
                 } header: {
                     HStack {
