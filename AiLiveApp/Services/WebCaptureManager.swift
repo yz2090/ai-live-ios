@@ -56,6 +56,7 @@ class WebCaptureManager: NSObject, ObservableObject {
     // ── v11.6 核心：页面内接口轮询 JS ──
     // 原理：JS 在 WKWebView 页面内 fetch，天然携带页面 Cookie（登录态）
     // 三个接口：评论(live_comment+cursor增量) / 订单(live_order+order_id去重) / 核心数据(base_info)
+    // v11.13: 新增 playinfo 轮询——自动检测当前直播 room_id，开新场次/换直播间自动跟随
     // 回传：postMessage 给原生 → 原生解析 → POST 服务器
     private let pollJS = """
     (function() {
@@ -71,6 +72,30 @@ class WebCaptureManager: NSObject, ObservableObject {
         function refreshRoomId() {
             var m = window.location.href.match(/live_room_id=(\\d+)/);
             if (m && m[1] && m[1].length >= 10 && m[1] !== '0') roomId = m[1];
+        }
+        // v11.13: 从中控台 playinfo 接口获取当前直播 room_id（每60秒）
+        // 如果和当前大屏 room_id 不一致 → 说明换了直播间/开了新场次 → 跳转到新大屏
+        var roomCheckCount = 0;
+        function pollRoom() {
+            roomCheckCount++;
+            // 只有前3次和之后每20次检查才跳转（避免频繁跳转），但每次更新 roomId
+            fetch('https://buyin.jinritemai.com/api/anchor/livepc/playinfo', {
+                credentials: 'include'
+            }).then(function(r) { return r.json(); }).then(function(d) {
+                var rid = '';
+                if (d && d.data) {
+                    rid = d.data.room_id || d.data.live_room_id || '';
+                }
+                if (!rid || rid.length < 10) return;
+                var m = window.location.href.match(/live_room_id=(\\d+)/);
+                var cur = m ? m[1] : roomId;
+                if (rid !== cur) {
+                    // 新场次/新直播间：跳转到新大屏页（状态重置由页面重载完成）
+                    if (roomCheckCount <= 3 || roomCheckCount % 20 === 0) {
+                        window.location.href = 'https://compass.jinritemai.com/screen/talent/main?live_room_id=' + rid + '&live_app_id=1128&source=compass_inner';
+                    }
+                }
+            }).catch(function(e) {});
         }
         function postMsg(type, payload) {
             try { window.webkit.messageHandlers.capBridge.postMessage(JSON.stringify({type: type, data: payload})); } catch(e) {}
@@ -130,9 +155,11 @@ class WebCaptureManager: NSObject, ObservableObject {
         setInterval(pollComments, 1000);
         setInterval(pollOrders, 1000);
         setInterval(pollCore, 300000);
+        setInterval(pollRoom, 60000);
         setTimeout(pollComments, 500);
         setTimeout(pollOrders, 800);
         setTimeout(pollCore, 1500);
+        setTimeout(pollRoom, 3000);
     })();
     """
 
