@@ -102,14 +102,32 @@ struct ContentView: View {
                     }
                     .fileImporter(
                         isPresented: $showMusicPicker,
-                        allowedContentTypes: [.audio],
+                        allowedContentTypes: [.item],  // iOS15 用 .item 更稳，避免 .audio 不弹窗
                         allowsMultipleSelection: true
                     ) { result in
                         if case .success(let urls) = result {
+                            var imported = 0
                             for url in urls {
+                                let ext = url.pathExtension.lowercased()
+                                guard ["mp3", "m4a", "wav", "aac", "flac", "caf"].contains(ext) else {
+                                    continue
+                                }
                                 audioPlayer.importMusic(from: url)
+                                imported += 1
                             }
+                            if imported == 0 {
+                                // 没导入任何文件时提示
+                                audioPlayer.lastImportError = "未找到支持的音频文件（mp3/m4a/wav）"
+                            }
+                        } else if case .failure(let err) = result {
+                            audioPlayer.lastImportError = "选择失败: \(err.localizedDescription)"
                         }
+                    }
+
+                    if let errMsg = audioPlayer.lastImportError {
+                        Text(errMsg)
+                            .font(.caption2)
+                            .foregroundColor(.orange)
                     }
 
                     if audioPlayer.musicFiles.isEmpty {

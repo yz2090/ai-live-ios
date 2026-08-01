@@ -20,6 +20,7 @@ class AudioPlayerService: NSObject, ObservableObject {
         }
     }
     @Published var isMuted = false
+    @Published var lastImportError: String? = nil   // 音乐导入错误提示
 
     private var player: AVAudioPlayer?          // TTS 播放器
     private var bgmPlayer: AVAudioPlayer?       // 背景音乐播放器
@@ -211,24 +212,52 @@ class AudioPlayerService: NSObject, ObservableObject {
     func startBackgroundKeepAlive() {
         guard keepAlivePlayer == nil else { return }
         do {
-            // 生成 0.5 秒静音 PCM 音频
+            // 生成 0.5 秒静音 WAV（AVAudioPlayer 需要标准WAV头，裸PCM播不了）
             let duration: Double = 0.5
-            let sampleRate: Double = 8000
-            let frameCount = Int(duration * sampleRate)
-            var pcm = Data(capacity: frameCount * 2)
+            let sampleRate: Int = 8000
+            let frameCount = Int(duration * Double(sampleRate))
+            var wav = Data()
+            // RIFF 头
+            wav.append(contentsOf: Array("RIFF".utf8))
+            let dataSize = frameCount * 2  // 16bit 单声道
+            let riffSize = 36 + dataSize
+            wav.append(contentsOf: littleEndianUInt32(UInt32(riffSize)))
+            wav.append(contentsOf: Array("WAVE".utf8))
+            // fmt 块
+            wav.append(contentsOf: Array("fmt ".utf8))
+            wav.append(contentsOf: littleEndianUInt32(16))          // fmt 块大小
+            wav.append(contentsOf: littleEndianUInt16(1))           // PCM
+            wav.append(contentsOf: littleEndianUInt16(1))           // 单声道
+            wav.append(contentsOf: littleEndianUInt32(UInt32(sampleRate)))
+            wav.append(contentsOf: littleEndianUInt32(UInt32(sampleRate * 2))) // 字节率
+            wav.append(contentsOf: littleEndianUInt16(2))           // 块对齐
+            wav.append(contentsOf: littleEndianUInt16(16))          // 位深
+            // data 块
+            wav.append(contentsOf: Array("data".utf8))
+            wav.append(contentsOf: littleEndianUInt32(UInt32(dataSize)))
             for _ in 0..<frameCount {
-                pcm.append(0)  // 左声道静音
-                pcm.append(0)  // 右声道静音
+                wav.append(0)  // 静音采样
+                wav.append(0)
             }
-            let player = try AVAudioPlayer(data: pcm)
+            let player = try AVAudioPlayer(data: wav)
             player.volume = 0
             player.numberOfLoops = -1  // 无限循环
             player.prepareToPlay()
             player.play()
             keepAlivePlayer = player
+            print("[AiLive] 后台保活WAV启动 (\(dataSize) 字节)")
         } catch {
             print("[AiLive] 后台保活音频启动失败: \(error)")
         }
+    }
+
+    /// 生成 WAV 小端字节
+    private func littleEndianUInt16(_ v: UInt16) -> [UInt8] {
+        return [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)]
+    }
+
+    private func littleEndianUInt32(_ v: UInt32) -> [UInt8] {
+        return [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
     }
 
     /// APP回前台时调用：停止静音保活
