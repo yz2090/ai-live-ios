@@ -182,17 +182,11 @@ struct ContentView: View {
 
                         Spacer()
 
-                        Button(webCapture.isLoggedIn ? "重新登录" : "评论登录") {
+                        Button(webCapture.isLoggedIn ? "重新登录" : "统一登录") {
                             webCapture.openLogin()
                         }
                         .buttonStyle(.bordered)
                         .tint(.blue)
-
-                        Button("订单登录") {
-                            webCapture.openOrderLogin()
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.purple)
                     }
 
                     InfoRow(label: "状态", value: webCapture.lastStatus)
@@ -215,7 +209,7 @@ struct ContentView: View {
                         .background(Color.black.opacity(0.85))
                         .cornerRadius(8)
                     }
-                    Text("启动后会在后台加载百应直播控制台抓评论 + 巨量百应大屏抓订单；首次使用请先点「百应登录」扫码登录（Cookie自动保存）。登录一次 buyin 和 compass 都需要，大屏页也要登录一次才能抓订单")
+                    Text("启动后会在后台加载百应直播控制台抓评论 + 巨量百应大屏抓订单；首次使用点「统一登录」扫码一次（buyin 登录后自动跳 compass 补登），登录态自动保存")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 } header: {

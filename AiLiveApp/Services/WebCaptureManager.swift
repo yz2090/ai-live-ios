@@ -13,10 +13,10 @@ class WebCaptureManager: NSObject, ObservableObject {
     @Published var showLoginSheet = false   // 是否显示登录 WebView
     @Published var isLoggedIn = false       // 是否已登录（检测到评论区元素）
     @Published var loginURL: URL = URL(string: "https://buyin.jinritemai.com")!  // 当前登录页 URL
+    var isCompassStep = false   // 统一登录：是否已切到 compass 补登阶段
 
     private var webView: WKWebView?
     private var orderWebView: WKWebView?   // 订单采集 WebView（compass 大屏）
-    private var loginWebView: WKWebView?   // 登录用可视 WebView（共享Cookie）
     private var deviceId: String = ""
     private var serverHost = kServerHost
     private var serverPort = kServerPort
@@ -37,8 +37,6 @@ class WebCaptureManager: NSObject, ObservableObject {
 
     // 百应登录页（扫码登录）
     private let buyinLoginURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
-    // 供登录 WebView 使用的公开登录地址
-    var buyinLoginURLForWeb: URL { buyinLoginURL }
 
     // 巨量百应数据大屏（订单采集）：登录后能看到直播实时订单
     // 实测接口: compass_api/content_live/author/live_screen/live_order?room_id=XXX&order_status=3&page_no=1&page_size=4
@@ -239,7 +237,7 @@ class WebCaptureManager: NSObject, ObservableObject {
                         if let s = result2 as? String, let d = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] {
                             let hasLogin = d["hasLogin"] as? Bool ?? false
                             if hasLogin {
-                                self.addLog("⚠️ 大屏未登录，点「订单登录」扫码")
+                                self.addLog("⚠️ 大屏未登录，请点「统一登录」扫码")
                             }
                         }
                     }
@@ -301,45 +299,28 @@ class WebCaptureManager: NSObject, ObservableObject {
     }
 
     // MARK: - 登录
+    /// 统一登录：一个按钮完成 buyin（评论）+ compass（订单）两个域的登录
+    /// 原理：buyin 与 compass 同属 *.jinritemai.com，SSO 登录 Cookie 域级共享，
+    /// 登一次 buyin 后 compass 自动继承；本方法在 buyin 登录成功后自动跳 compass 补登，
+    /// 全部完成后自动关闭登录页
     func openLogin() {
         loginURL = buyinLoginURL
         showLoginSheet = true
-        if loginWebView == nil {
-            let config = WKWebViewConfiguration()
-            config.websiteDataStore = WKWebsiteDataStore.default()  // 共享 Cookie
-            // 桌面版 UA（百应只适配电脑浏览器）
-            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-            config.applicationNameForUserAgent = desktopUA
-            loginWebView = WKWebView(frame: .zero, configuration: config)
-            loginWebView?.customUserAgent = desktopUA
-            loginWebView?.navigationDelegate = self
-            loginWebView?.load(URLRequest(url: buyinLoginURL))
-        }
-        addLog("🔐 打开百应登录页（桌面版）…")
+        addLog("🔐 统一登录：先登 buyin（评论）…")
     }
 
-    /// 打开 compass 大屏登录（订单采集需要独立登录）
-    func openOrderLogin() {
+    /// 统一登录第二步：buyin 登录成功后自动跳 compass 补登（订单）
+    /// 通过更新 @Published loginURL 触发 LoginWebView 重新导航
+    func continueOrderLogin() {
         loginURL = compassURL
-        showLoginSheet = true
-        if loginWebView == nil {
-            let config = WKWebViewConfiguration()
-            config.websiteDataStore = WKWebsiteDataStore.default()
-            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-            config.applicationNameForUserAgent = desktopUA
-            loginWebView = WKWebView(frame: .zero, configuration: config)
-            loginWebView?.customUserAgent = desktopUA
-            loginWebView?.navigationDelegate = self
-            loginWebView?.load(URLRequest(url: compassURL))
-        }
-        addLog("🔐 打开巨量百应大屏登录（订单采集）…")
+        isCompassStep = true
+        addLog("🔁 buyin 已登录，自动跳 compass 补登（订单）…")
     }
 
     func closeLogin() {
         showLoginSheet = false
-        loginWebView?.stopLoading()
-        loginWebView = nil
-        // 关闭登录后重新检测（可能已登录）
+        isCompassStep = false
+        // 登录页 WebView 由 SwiftUI sheet 管理，这里只重置状态
         loginDetectCount = 0
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.checkLoginState()
