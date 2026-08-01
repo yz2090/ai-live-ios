@@ -18,9 +18,9 @@ struct LoginWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // url 变化时重新导航（统一登录：buyin 成功 → 自动跳 compass）
+        // v11.17 手动模式：只在首次加载目标页，之后完全由用户控制跳转（不强制回跳）
         let targetURL = url ?? manager.loginURL
-        if uiView.url == nil || uiView.url?.absoluteString != targetURL.absoluteString {
+        if uiView.url == nil {
             uiView.load(URLRequest(url: targetURL))
         }
     }
@@ -37,25 +37,11 @@ struct LoginWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // 登录成功跳转后，可能已进入控制台
+            // v11.17 手动模式：不做任何自动跳转/自动关闭
+            // 用户自己在窗口里登录、跳转，完成后点"✓ 完成"关闭
             if let url = webView.url?.absoluteString {
                 print("[AiLive] 登录页导航: \(url)")
-                let phase = parent.manager.loginPhase
-                // v11.16 分步状态机：buyin登录 → compass建Cookie → 大屏 → 完成
-                if phase == .buyinLogin && !url.contains("login") && !url.contains("passport") && !url.contains("douyinec") {
-                    // buyin 登录成功（进入控制台/任意非登录页）
-                    parent.manager.isLoggedIn = true
-                    parent.manager.loginDetectCount = 0
-                    parent.manager.addLog("🎉 buyin 登录成功！")
-                    parent.manager.continueOrderLogin()
-                } else if phase == .compassVisit && url.contains("compass.jinritemai.com") {
-                    // compass 主页加载完成 → 已建立 compass 域 Cookie
-                    parent.manager.compassVisitedOK()
-                } else if phase == .finished && url.contains("compass.jinritemai.com/screen") {
-                    // 大屏页加载完成 = 全部登录完成
-                    parent.manager.addLog("✅ 统一登录完成！评论+订单都可采集")
-                    parent.manager.closeLogin()
-                }
+                parent.manager.addLog("🌐 \(url.prefix(60))")
             }
         }
 

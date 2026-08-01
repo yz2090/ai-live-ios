@@ -227,11 +227,18 @@ struct ContentView: View {
                     Label("🌐 网页采集", systemImage: "globe")
                 }
                 .sheet(isPresented: $webCapture.showLoginSheet) {
-                    // 百应登录 WebView（buyin 或 compass）
+                    // 手动登录 WebView（v11.17: douyinec.com，用户自己登录跳转）
                     LoginWebView(manager: webCapture, url: webCapture.loginURL)
                         .ignoresSafeArea()
                         .overlay(alignment: .top) {
                             HStack {
+                                Text("手动登录：登录后自己跳转到大屏页")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.black.opacity(0.55))
+                                    .cornerRadius(12)
                                 Spacer()
                                 Button {
                                     webCapture.closeLogin()
@@ -246,6 +253,22 @@ struct ContentView: View {
                                 .padding(.top, 8)
                                 .padding(.trailing, 8)
                             }
+                            .padding(.leading, 8)
+                        }
+                        .overlay(alignment: .bottom) {
+                            // v11.17: 手动完成按钮（用户登录+跳转完成后点这个）
+                            Button {
+                                webCapture.closeLogin()
+                            } label: {
+                                Label("✅ 完成登录，开始采集", systemImage: "checkmark.circle.fill")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 30)
+                                    .padding(.vertical, 12)
+                                    .background(Color.green.opacity(0.9))
+                                    .cornerRadius(24)
+                            }
+                            .padding(.bottom, 30)
                         }
                 }
 

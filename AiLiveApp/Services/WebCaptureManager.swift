@@ -21,13 +21,6 @@ class WebCaptureManager: NSObject, ObservableObject {
     @Published var isLoggedIn = false       // 是否已登录
     @Published var loginURL: URL = URL(string: "https://buyin.jinritemai.com")!  // 当前登录页 URL
     var isCompassStep = false   // 统一登录：是否已切到 compass 补登阶段
-    // v11.16: 分步登录状态机（buyin登录→compass建Cookie→大屏加载→完成）
-    enum LoginPhase {
-        case idle, buyinLogin, buyinDone, compassVisit, compassDone, finished
-    }
-    var loginPhase: LoginPhase = .idle
-    private var loginStepTimer: Timer?      // 分步跳转定时器
-    private var compassVisited = false      // compass 域是否已访问（建 Cookie）
 
     private var webView: WKWebView?          // 唯一 WebView：加载基础版大屏，维持登录态
     private var deviceId: String = ""
@@ -213,6 +206,8 @@ class WebCaptureManager: NSObject, ObservableObject {
     private let buyinURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
     // v11.16: compass 主页（先访问此页建立 compass 域 Cookie，再跳大屏）
     private let compassHomeURL = URL(string: "https://compass.jinritemai.com")!
+    // v11.17: 手动登录入口页（用户自己登录、自己跳转，不自动关闭）
+    private let douyinecURL = URL(string: "https://www.douyinec.com/")!
     private let buyinLoginURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
 
     override private init() {
@@ -549,13 +544,13 @@ class WebCaptureManager: NSObject, ObservableObject {
         }.resume()
     }
 
-    // MARK: - 登录（v11.16 分步状态机）
-    // 流程：① buyin登录页扫码 → ② buyin成功(停在控制台3秒建Cookie) → ③ compass主页建Cookie → ④ 大屏页加载 → ⑤ 完成
+    // MARK: - 登录（v11.17 手动模式）
+    // 流程：打开 douyinec.com → 用户自己登录/自己跳转 → 用户点"完成"关闭窗口
+    // 登录态（Cookie）自动保存在 WKWebsiteDataStore，采集页共享
     func openLogin() {
-        loginPhase = .buyinLogin
-        loginURL = buyinLoginURL
+        loginURL = douyinecURL
         showLoginSheet = true
-        addLog("🔐 统一登录：第1步 先登 buyin（评论）…")
+        addLog("🔐 手动登录：打开 douyinec.com，登录后自己跳转到大屏页，完成点右上角✓")
     }
 
     /// 重新加载采集页（登录成功后刷新 Cookie/登录态）
@@ -565,44 +560,13 @@ class WebCaptureManager: NSObject, ObservableObject {
         addLog("📄 重新加载采集页（刷新登录态）…")
     }
 
-    /// buyin 登录成功 → 停留几秒 → 跳 compass 建 Cookie
-    func continueOrderLogin() {
-        guard loginPhase == .buyinLogin || loginPhase == .buyinDone else { return }
-        loginPhase = .buyinDone
-        addLog("🔁 buyin 登录成功，停留 3 秒建 Cookie…")
-        // 停留 3 秒让 buyin Cookie 写全，然后跳 compass 主页
-        loginStepTimer?.invalidate()
-        loginStepTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            self.loginPhase = .compassVisit
-            self.loginURL = self.compassHomeURL
-            self.addLog("📡 第2步 访问 compass 建立登录态…")
-        }
-    }
-
-    /// compass 主页访问完成（didFinish 回调），等 2 秒 → 跳大屏页
-    func compassVisitedOK() {
-        guard loginPhase == .compassVisit else { return }
-        compassVisited = true
-        loginPhase = .compassDone
-        addLog("✅ compass 登录态建立，等 2 秒跳大屏…")
-        loginStepTimer?.invalidate()
-        loginStepTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            self.loginPhase = .finished
-            self.loginURL = self.compassURL
-            self.addLog("📊 第3步 加载直播大屏…")
-        }
-    }
-
     func closeLogin() {
         showLoginSheet = false
         isCompassStep = false
-        loginPhase = .finished
         loginDetectCount = 0
-        loginStepTimer?.invalidate()
-        loginStepTimer = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+        // 关闭登录窗口后，重新加载采集页（带上新登录态）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.loadConsole()
             self?.checkStatus()
         }
     }
