@@ -11,7 +11,7 @@ final class MusicDocumentPicker: NSObject, UIDocumentPickerDelegate {
     /// 弹出文件选择器（支持多选，自动复制到App沙盒）
     func present(
         from viewController: UIViewController?,
-        allowedTypes: [UTType] = [.audio, .mp3, .m4a, .wav, .aac, .flac, .caf],
+        allowedTypes: [UTType] = [.audio],
         allowsMultiple: Bool = true,
         onPicked: @escaping ([URL]) -> Void,
         onCancel: (() -> Void)? = nil

@@ -98,7 +98,7 @@ struct ContentView: View {
                         // iOS15 SwiftUI fileImporter 有 bug 不弹窗，改用 UIKit 原生选择器
                         MusicDocumentPicker.shared.present(
                             from: UIApplication.topViewController(),
-                            allowedTypes: [.audio, .mp3, .m4a, .wav, .aac, .flac, .caf]
+                            allowedTypes: [.audio]
                         ) { urls in
                             var imported = 0
                             for url in urls {
