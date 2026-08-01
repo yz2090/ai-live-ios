@@ -239,6 +239,7 @@ struct ContentView: View {
                                     .padding(.vertical, 5)
                                     .background(Color.black.opacity(0.55))
                                     .cornerRadius(12)
+                                    .allowsHitTesting(false)  // v11.18: 提示文字不拦截页面点击
                                 Spacer()
                                 Button {
                                     webCapture.closeLogin()
