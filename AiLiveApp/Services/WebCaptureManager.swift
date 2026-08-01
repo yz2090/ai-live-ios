@@ -27,6 +27,7 @@ class WebCaptureManager: NSObject, ObservableObject {
     @Published var orderCapturedCount = 0   // 已抓订单数
     @Published var orderLastInfo = ""      // 最后一条订单信息
     private var seenOrderIds = Set<String>()  // 已见过的订单号
+    private var lastDiagSummary = ""   // 上次诊断摘要（变化才打日志，防刷屏）
 
     // 百应直播中控台（登录后自动跳转到这里采集）
     // 参考闪控猫(智播魔方) media_url_list.txt 抖音入口：用无参数标准 URL，
@@ -150,6 +151,11 @@ class WebCaptureManager: NSObject, ObservableObject {
         let config = WKWebViewConfiguration()
         let userContentController = WKUserContentController()
         userContentController.add(self, name: "capBridge")
+        // v11.4: WKUserScript atDocumentStart 自动注入（页面一加载就注入，不依赖 didFinish 时机）
+        // 幂等：captureJS 内部有 window.__capInit 防重复，SPA 内部跳转后再执行也不会有问题
+        userContentController.addUserScript(
+            WKUserScript(source: captureJS, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
         config.userContentController = userContentController
 
         // 允许 Cookie 持久化（登录态）
@@ -181,6 +187,10 @@ class WebCaptureManager: NSObject, ObservableObject {
         let config = WKWebViewConfiguration()
         let userContentController = WKUserContentController()
         userContentController.add(self, name: "orderBridge")
+        // v11.4: 订单 JS 同样 WKUserScript 自动注入（幂等，__orderInit 防重复）
+        userContentController.addUserScript(
+            WKUserScript(source: orderJS, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
         config.userContentController = userContentController
         config.websiteDataStore = WKWebsiteDataStore.default()  // 共享 Cookie
         config.applicationNameForUserAgent = desktopUA
@@ -216,6 +226,7 @@ class WebCaptureManager: NSObject, ObservableObject {
                 self.lastStatus = "页面状态: \(state)"
                 if state == "complete" {
                     self.checkLoginState()
+                    // v11.4: 补注 + 诊断（SPA 内部跳转后 WKUserScript 不会重跑，这里幂等补注）
                     self.injectCaptureJS()
                 }
             }
@@ -333,14 +344,54 @@ class WebCaptureManager: NSObject, ObservableObject {
         }
     }
 
+    /// 注入抓取 JS（幂等）+ 立即诊断
+    /// WKUserScript 已自动注入，这里是 SPA 跳转后的补注兜底；诊断报告实际找到的评论条数
     private func injectCaptureJS() {
         guard let webView = webView else { return }
         webView.evaluateJavaScript(captureJS) { [weak self] _, error in
             if let error = error {
                 self?.addLog("⚠️ JS注入失败: \(error.localizedDescription)")
             } else {
-                self?.addLog("✅ 评论抓取JS已注入")
                 self?.lastStatus = "采集中"
+            }
+            self?.reportCaptureDiag()
+        }
+    }
+
+    /// 诊断：报告 JS 是否注入成功 + 页面实际找到的评论元素数量
+    /// 用户一测就知道：JS 有没有生效、DOM 选择器对不对、是不是在控制台页
+    private func reportCaptureDiag() {
+        guard let webView = webView else { return }
+        let js = """
+        (function() {
+            var items = document.querySelectorAll('[class*="commentItem"]').length;
+            var descs = document.querySelectorAll('[class*="description"]').length;
+            var init = window.__capInit === true;
+            var url = window.location.href;
+            return JSON.stringify({injected: init, items: items, descs: descs, url: url});
+        })();
+        """
+        webView.evaluateJavaScript(js) { [weak self] result, error in
+            guard let self = self else { return }
+            if let s = result as? String,
+               let d = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] {
+                let injected = d["injected"] as? Bool ?? false
+                let items = d["items"] as? Int ?? 0
+                let descs = d["descs"] as? Int ?? 0
+                let url = d["url"] as? String ?? ""
+                let summary = "注入:\(injected ? "✅" : "❌") 评论条目:\(items) 内容:\(descs) \(url.prefix(45))"
+                // 只在状态变化时打日志，避免每10秒刷屏
+                if summary != self.lastDiagSummary {
+                    self.lastDiagSummary = summary
+                    self.addLog("🔍 诊断: \(summary)")
+                }
+                if injected && items > 0 {
+                    self.lastStatus = "采集中（找到 \(items) 条评论）"
+                } else if injected {
+                    self.lastStatus = "已注入，但未找到评论元素"
+                }
+            } else if let error = error {
+                self?.addLog("⚠️ 诊断失败: \(error.localizedDescription)")
             }
         }
     }
