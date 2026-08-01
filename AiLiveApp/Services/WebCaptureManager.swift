@@ -28,7 +28,9 @@ class WebCaptureManager: NSObject, ObservableObject {
     private var seenOrderIds = Set<String>()  // 已见过的订单号
 
     // 百应直播中控台（登录后自动跳转到这里采集）
-    private let buyinConsoleURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control?btm_ppre=a0.b0.c0.d0&btm_pre=a10091.b089178.c809509.d0&btm_show_id=1ea37d54-1224-4379-b7e3-483630e500c9&pre_universal_page_params_id=&universal_page_params_id=eba566c6-400f-4464-9ebf-dc368e39aa88")!
+    // 参考闪控猫(智播魔方) media_url_list.txt 抖音入口：用无参数标准 URL，
+    // 避免 btm_ppre / btm_show_id 等临时参数过期导致进不去直播间
+    private let buyinConsoleURL = URL(string: "https://buyin.jinritemai.com/dashboard/live/control")!
 
     // 首次加载页面：达人工作台登录页（用户提供，type=24）
     private let buyinURL = URL(string: "https://buyin.jinritemai.com/mpa/account/login?log_out=1&type=24")!
@@ -40,6 +42,7 @@ class WebCaptureManager: NSObject, ObservableObject {
 
     // 巨量百应数据大屏（订单采集）：登录后能看到直播实时订单
     // 实测接口: compass_api/content_live/author/live_screen/live_order?room_id=XXX&order_status=3&page_no=1&page_size=4
+    // room_id 写死一个默认值，页面加载后 JS 会从 URL 动态提取实际 room_id（换直播间也能采集）
     private let compassURL = URL(string: "https://compass.jinritemai.com/screen/talent/main?live_room_id=7668676207549991720&live_app_id=1128")!
 
     // 订单采集 JS：每2.5秒轮询 live_order 接口，发现新订单回传
@@ -53,8 +56,14 @@ class WebCaptureManager: NSObject, ObservableObject {
         if (window.__orderInit) return;
         window.__orderInit = true;
         window.__orderSeen = new Set();
+        // room_id 动态提取：优先从当前页面 URL 拿（换直播间自动跟随），取不到用默认
         var roomId = '7668676207549991720';
+        function refreshRoomId() {
+            var m = window.location.href.match(/live_room_id=(\\d+)/);
+            if (m && m[1]) roomId = m[1];
+        }
         function poll() {
+            refreshRoomId();
             fetch('https://compass.jinritemai.com/compass_api/content_live/author/live_screen/live_order?room_id=' + roomId + '&order_status=3&page_no=1&page_size=4', {
                 credentials: 'include'
             }).then(function(r) { return r.json(); }).then(function(d) {
