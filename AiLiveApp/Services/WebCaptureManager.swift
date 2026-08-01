@@ -42,8 +42,9 @@ class WebCaptureManager: NSObject, ObservableObject {
 
     // 巨量百应数据大屏（订单采集）：登录后能看到直播实时订单
     // 实测接口: compass_api/content_live/author/live_screen/live_order?room_id=XXX&order_status=3&page_no=1&page_size=4
+    // 2026-08-01 实测：/screen/live/talent 是专业版（有完整订单数据），/screen/talent/main 是基础版（数据不全）
     // room_id 写死一个默认值，页面加载后 JS 会从 URL 动态提取实际 room_id（换直播间也能采集）
-    private let compassURL = URL(string: "https://compass.jinritemai.com/screen/talent/main?live_room_id=7668676207549991720&live_app_id=1128")!
+    private let compassURL = URL(string: "https://compass.jinritemai.com/screen/live/talent?live_room_id=7668676207549991720&live_app_id=1128&source=baiying_home")!
 
     // 订单采集 JS：每2.5秒轮询 live_order 接口，发现新订单回传
     // 实测接口返回（2026-08-01）:
@@ -60,7 +61,7 @@ class WebCaptureManager: NSObject, ObservableObject {
         var roomId = '7668676207549991720';
         function refreshRoomId() {
             var m = window.location.href.match(/live_room_id=(\\d+)/);
-            if (m && m[1]) roomId = m[1];
+            if (m && m[1] && m[1].length >= 10 && m[1] !== '0') roomId = m[1];
         }
         function poll() {
             refreshRoomId();
@@ -468,15 +469,22 @@ class WebCaptureManager: NSObject, ObservableObject {
         }
         for o in orders {
             let nick = o["nick_name"] as? String ?? ""
-            let product = o["sku_product_title"] as? String ?? (o["product_title"] as? String ?? "")
-            let amount = (o["order_amount"] as? [String: Any])?["value"] as? Double ?? 0
+            var product = o["sku_product_title"] as? String ?? (o["product_title"] as? String ?? "")
+            // 2026-08-01 严谨性：商品名可能很长（如"企鹅公道杯功夫茶具配件茶海分茶器茶漏加厚玻璃耐热透明泡茶过滤"），
+            // 截断到 12 字，避免 TTS 感谢语超长
+            if product.count > 12 {
+                product = String(product.prefix(12))
+            }
+            // 2026-08-01 修复：order_amount.value 单位是"分"，需除以 100 才是元（实测 ¥2.80 = value 280）
+            let amountFen = (o["order_amount"] as? [String: Any])?["value"] as? Double ?? 0
+            let amount = amountFen / 100.0
 
             // 格式化为服务器认识的文本：{昵称}下单{商品}
             // 服务器 parse_order 会提取昵称和商品，生成点名感谢
             let text = "\(nick)下单\(product)"
             orderCapturedCount += 1
-            orderLastInfo = "\(nick) 下单 \(product) ¥\(Int(amount))"
-            addLog("🛒 \(nick) 下单 \(product) ¥\(Int(amount))")
+            orderLastInfo = "\(nick) 下单 \(product) ¥\(String(format: "%.2f", amount))"
+            addLog("🛒 \(nick) 下单 \(product) ¥\(String(format: "%.2f", amount))")
             postOrderToServer(nick: nick, product: product, amount: amount)
         }
     }
