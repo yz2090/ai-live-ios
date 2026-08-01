@@ -9,9 +9,8 @@ struct LoginWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = WKWebsiteDataStore.default()  // 与后台采集共享登录态
-        // 桌面版 UA（百应官网只适配电脑浏览器）
-        let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-        config.applicationNameForUserAgent = desktopUA
+        // v11.16: 桌面 Chrome UA（百应大屏对 Safari/WebKit UA 返回"已结束"降级页）
+        let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = desktopUA
         webView.navigationDelegate = context.coordinator
@@ -41,28 +40,21 @@ struct LoginWebView: UIViewRepresentable {
             // 登录成功跳转后，可能已进入控制台
             if let url = webView.url?.absoluteString {
                 print("[AiLive] 登录页导航: \(url)")
-                // buyin 登录成功（进入控制台或任意非登录页）→ 让采集 WebView 也加载直播控制台
-                if url.contains("live/control") {
+                let phase = parent.manager.loginPhase
+                // v11.16 分步状态机：buyin登录 → compass建Cookie → 大屏 → 完成
+                if phase == .buyinLogin && !url.contains("login") && !url.contains("passport") && !url.contains("douyinec") {
+                    // buyin 登录成功（进入控制台/任意非登录页）
                     parent.manager.isLoggedIn = true
                     parent.manager.loginDetectCount = 0
-                    parent.manager.addLog("🎉 buyin 登录成功！自动跳 compass 补登…")
-                    // 关键：让采集 webView 加载直播控制台（评论采集页）
-                    parent.manager.loadConsole()
+                    parent.manager.addLog("🎉 buyin 登录成功！")
                     parent.manager.continueOrderLogin()
-                } else if !url.contains("login") && !url.contains("passport") && !url.contains("douyinec") {
-                    // 登录成功但跳到了首页/其他页 → 主动加载控制台
-                    parent.manager.isLoggedIn = true
-                    parent.manager.loginDetectCount = 0
-                    parent.manager.addLog("🎉 登录成功（\(url.prefix(40))），跳转直播控制台…")
-                    parent.manager.loadConsole()
-                    parent.manager.continueOrderLogin()
-                }
-                // compass 大屏页加载成功 = 订单采集可用，且已在补登阶段 → 全部完成，自动关闭
-                if url.contains("compass.jinritemai.com/screen") && parent.manager.isCompassStep {
+                } else if phase == .compassVisit && url.contains("compass.jinritemai.com") {
+                    // compass 主页加载完成 → 已建立 compass 域 Cookie
+                    parent.manager.compassVisitedOK()
+                } else if phase == .finished && url.contains("compass.jinritemai.com/screen") {
+                    // 大屏页加载完成 = 全部登录完成
                     parent.manager.addLog("✅ 统一登录完成！评论+订单都可采集")
                     parent.manager.closeLogin()
-                } else if url.contains("compass.jinritemai.com/screen") {
-                    parent.manager.addLog("📊 大屏需要登录，请扫码（订单采集）")
                 }
             }
         }
