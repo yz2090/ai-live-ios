@@ -45,30 +45,29 @@ struct LoginWebView: UIViewRepresentable {
             }
         }
 
-        // 拦截 window.open 新窗口：返回 nil 会导致 WebKit 丢弃导航（点链接没反应）
-        // v11.18: 新窗口导航统一在 decidePolicyFor 里处理（targetFrame == nil → 当前 WebView 打开）
+        // 拦截 window.open 新窗口：v8 验证过的方案——返回同一个 webView，强制当前页打开
+        // （返回 nil 会被 WebKit 丢弃导航，点链接没反应；decidePolicyFor 的 targetFrame 判断
+        //  在百应页面某些导航上不触发，所以必须在这里返回真实 webView）
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            // 返回 nil：不创建新窗口。新窗口导航已由 decidePolicyFor 拦截并转入当前 WebView
-            return nil
+            // 抖音唤起协议 → 系统打开抖音 App
+            if let url = navigationAction.request.url, Self.isAppScheme(url) {
+                UIApplication.shared.open(url, options: [:]) { ok in
+                    print("[AiLive] 唤起抖音: \(ok)")
+                }
+                return nil
+            }
+            // 返回同一个 webView：新窗口内容直接在当前页加载（v8 验证有效）
+            return webView
         }
 
-        // 导航策略：新窗口链接（target=_blank / window.open）→ 当前 WebView 打开；抖音唤起协议 → 系统打开
+        // 导航策略：抖音唤起协议 → 系统打开；其余放行（新窗口已由 createWebViewWith 接管）
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if let url = navigationAction.request.url {
-                if Self.isAppScheme(url) {
-                    UIApplication.shared.open(url, options: [:]) { ok in
-                        print("[AiLive] 唤起抖音(策略): \(ok)")
-                    }
-                    decisionHandler(.cancel)
-                    return
+            if let url = navigationAction.request.url, Self.isAppScheme(url) {
+                UIApplication.shared.open(url, options: [:]) { ok in
+                    print("[AiLive] 唤起抖音(策略): \(ok)")
                 }
-                // 新窗口导航（targetFrame == nil）：强制在当前 WebView 打开，否则点击无反应
-                if navigationAction.targetFrame == nil {
-                    print("[AiLive] 新窗口导航 → 当前页打开: \(url.absoluteString.prefix(80))")
-                    webView.load(navigationAction.request)
-                    decisionHandler(.cancel)
-                    return
-                }
+                decisionHandler(.cancel)
+                return
             }
             decisionHandler(.allow)
         }

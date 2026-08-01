@@ -608,9 +608,11 @@ extension WebCaptureManager: WKNavigationDelegate {
                 UIApplication.shared.open(url, options: [:]) { ok in
                     self.addLog(ok ? "📱 已唤起抖音 App" : "⚠️ 无法唤起抖音 App（未安装？）")
                 }
-            } else {
-                webView.load(URLRequest(url: url))
+                return nil
             }
+            // v8 验证方案：返回同一个 webView，新窗口内容在当前页加载
+            // （返回 nil 会丢弃导航，导致点链接没反应）
+            return webView
         }
         return nil
     }
