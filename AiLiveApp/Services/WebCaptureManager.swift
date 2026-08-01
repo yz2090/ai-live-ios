@@ -391,7 +391,7 @@ class WebCaptureManager: NSObject, ObservableObject {
                     self.lastStatus = "已注入，但未找到评论元素"
                 }
             } else if let error = error {
-                self?.addLog("⚠️ 诊断失败: \(error.localizedDescription)")
+                self.addLog("⚠️ 诊断失败: \(error.localizedDescription)")
             }
         }
     }
