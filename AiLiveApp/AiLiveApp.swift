@@ -36,8 +36,17 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
-    // 后台时保持连接
+    // 后台时保持连接：播放静音音频防止iOS挂起
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // 音频会话已配置为 playback，App 会持续在后台运行
+        AudioPlayerService.shared.startBackgroundKeepAlive()
+    }
+
+    // 回前台：停止静音保活
+    func applicationWillEnterForeground(_ application: UIApplication) {
+        AudioPlayerService.shared.stopBackgroundKeepAlive()
+        // 如果断线了立即重连
+        if !WebSocketManager.shared.isConnected {
+            WebSocketManager.shared.connect()
+        }
     }
 }

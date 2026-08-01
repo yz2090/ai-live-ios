@@ -23,6 +23,7 @@ class AudioPlayerService: NSObject, ObservableObject {
 
     private var player: AVAudioPlayer?          // TTS 播放器
     private var bgmPlayer: AVAudioPlayer?       // 背景音乐播放器
+    private var keepAlivePlayer: AVAudioPlayer? // 后台静音保活播放器（防止iOS挂起）
     private var audioQueue: [Data] = []          // TTS 音频队列
     private var isPlayingQueue = false
     private var musicIndex = 0
@@ -203,6 +204,37 @@ class AudioPlayerService: NSObject, ObservableObject {
         isMuted = muted
         player?.volume = muted ? 0 : ttsVolume
         bgmPlayer?.volume = muted ? 0 : musicVolume
+    }
+
+    // MARK: - 后台保活（静音音频循环，防止iOS挂起）
+    /// APP进后台时调用：播放静音保持音频会话活跃，WebSocket不断线
+    func startBackgroundKeepAlive() {
+        guard keepAlivePlayer == nil else { return }
+        do {
+            // 生成 0.5 秒静音 PCM 音频
+            let duration: Double = 0.5
+            let sampleRate: Double = 8000
+            let frameCount = Int(duration * sampleRate)
+            var pcm = Data(capacity: frameCount * 2)
+            for _ in 0..<frameCount {
+                pcm.append(0)  // 左声道静音
+                pcm.append(0)  // 右声道静音
+            }
+            let player = try AVAudioPlayer(data: pcm)
+            player.volume = 0
+            player.numberOfLoops = -1  // 无限循环
+            player.prepareToPlay()
+            player.play()
+            keepAlivePlayer = player
+        } catch {
+            print("[AiLive] 后台保活音频启动失败: \(error)")
+        }
+    }
+
+    /// APP回前台时调用：停止静音保活
+    func stopBackgroundKeepAlive() {
+        keepAlivePlayer?.stop()
+        keepAlivePlayer = nil
     }
 
     func setTtsVolume(_ vol: Float) {
