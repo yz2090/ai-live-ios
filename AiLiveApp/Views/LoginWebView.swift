@@ -41,20 +41,27 @@ struct LoginWebView: UIViewRepresentable {
             // 登录成功跳转后，可能已进入控制台
             if let url = webView.url?.absoluteString {
                 print("[AiLive] 登录页导航: \(url)")
-                // buyin 登录成功（进入控制台）→ 自动跳 compass 补登订单
+                // buyin 登录成功（进入控制台或任意非登录页）→ 让采集 WebView 也加载直播控制台
                 if url.contains("live/control") {
                     parent.manager.isLoggedIn = true
                     parent.manager.loginDetectCount = 0
                     parent.manager.addLog("🎉 buyin 登录成功！自动跳 compass 补登…")
+                    // 关键：让采集 webView 加载直播控制台（评论采集页）
+                    parent.manager.loadConsole()
+                    parent.manager.continueOrderLogin()
+                } else if !url.contains("login") && !url.contains("passport") && !url.contains("douyinec") {
+                    // 登录成功但跳到了首页/其他页 → 主动加载控制台
+                    parent.manager.isLoggedIn = true
+                    parent.manager.loginDetectCount = 0
+                    parent.manager.addLog("🎉 登录成功（\(url.prefix(40))），跳转直播控制台…")
+                    parent.manager.loadConsole()
                     parent.manager.continueOrderLogin()
                 }
                 // compass 大屏页加载成功 = 订单采集可用，且已在补登阶段 → 全部完成，自动关闭
                 if url.contains("compass.jinritemai.com/screen") && parent.manager.isCompassStep {
-                    // 大屏页能正常加载（未跳登录页）= 继承登录态成功
                     parent.manager.addLog("✅ 统一登录完成！评论+订单都可采集")
                     parent.manager.closeLogin()
                 } else if url.contains("compass.jinritemai.com/screen") {
-                    // compass 需要独立登录（未继承 buyin 态）→ 停在页面让用户扫码
                     parent.manager.addLog("📊 大屏需要登录，请扫码（订单采集）")
                 }
             }

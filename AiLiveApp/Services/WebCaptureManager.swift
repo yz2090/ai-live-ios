@@ -23,6 +23,7 @@ class WebCaptureManager: NSObject, ObservableObject {
     private var seenKeys = Set<String>()
     private var timer: Timer?
     var loginDetectCount = 0        // 连续检测到未登录的次数
+    private var lastConsoleLoadTime: TimeInterval = 0   // 上次跳转控制台时间（防抖）
     @Published var orderCapturedCount = 0   // 已抓订单数
     @Published var orderLastInfo = ""      // 最后一条订单信息
     private var seenOrderIds = Set<String>()  // 已见过的订单号
@@ -279,9 +280,10 @@ class WebCaptureManager: NSObject, ObservableObject {
                     if self.loginDetectCount >= 2 && !self.showLoginSheet {
                         self.addLog("🔐 检测到未登录，请点击「百应登录」扫码登录")
                     }
-                } else if !currentURL.contains("live/control") && !self.isLoggedIn {
-                    // 已登录但不在控制台（比如登录成功后停在登录页/首页）→ 自动跳转控制台
-                    self.addLog("🔁 已登录，自动跳转直播控制台…")
+                } else if !currentURL.contains("live/control") {
+                    // 不在直播控制台（首页/工作台等）→ 自动跳转控制台采集页
+                    // 无论 isLoggedIn 状态都尝试（登录成功后百应默认跳首页，需主动进控制台）
+                    self.addLog("🔁 跳转直播控制台（当前:\\(currentURL.prefix(50))）…")
                     self.loadConsole()
                 } else {
                     // 既没检测到评论区也没检测到登录页：可能页面还在加载或布局变了
@@ -294,6 +296,10 @@ class WebCaptureManager: NSObject, ObservableObject {
     /// 跳转到直播控制台（采集页）
     func loadConsole() {
         guard let webView = webView else { return }
+        // 防抖：10 秒内不重复跳转（避免 checkStatus 循环触发）
+        let now = Date().timeIntervalSince1970
+        if now - lastConsoleLoadTime < 10 { return }
+        lastConsoleLoadTime = now
         webView.load(URLRequest(url: buyinConsoleURL))
         addLog("📄 加载直播控制台…")
     }
