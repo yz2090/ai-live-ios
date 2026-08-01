@@ -43,6 +43,12 @@ struct LoginWebView: UIViewRepresentable {
                 print("[AiLive] 登录页导航: \(url)")
                 parent.manager.addLog("🌐 \(url.prefix(60))")
             }
+            // v11.20: 检测 compass 域是否已有登录 Cookie（sessionid），有则提示登录成功
+            webView.evaluateJavaScript("document.cookie") { result, _ in
+                if let cookieStr = result as? String, cookieStr.contains("sessionid") || cookieStr.contains("sid_guard") || cookieStr.contains("passport_auth_status") {
+                    parent.manager.addLog("✅ 检测到登录态！可以点「完成登录」了")
+                }
+            }
         }
 
         // 拦截 window.open 新窗口：v8 验证过的方案——返回同一个 webView，强制当前页打开

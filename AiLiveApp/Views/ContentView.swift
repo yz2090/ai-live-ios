@@ -227,12 +227,12 @@ struct ContentView: View {
                     Label("🌐 网页采集", systemImage: "globe")
                 }
                 .sheet(isPresented: $webCapture.showLoginSheet) {
-                    // 手动登录 WebView（v11.17: douyinec.com，用户自己登录跳转）
+                    // 手动登录 WebView（v11.20: 直接打开直播大屏页，扫码即登录 compass 域）
                     LoginWebView(manager: webCapture, url: webCapture.loginURL)
                         .ignoresSafeArea()
                         .overlay(alignment: .top) {
                             HStack {
-                                Text("手动登录：登录后自己跳转到大屏页")
+                                Text("大屏页已打开：若提示扫码验证，请用抖音扫码登录")
                                     .font(.caption)
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 10)

@@ -548,9 +548,11 @@ class WebCaptureManager: NSObject, ObservableObject {
     // 流程：打开 douyinec.com → 用户自己登录/自己跳转 → 用户点"完成"关闭窗口
     // 登录态（Cookie）自动保存在 WKWebsiteDataStore，采集页共享
     func openLogin() {
-        loginURL = douyinecURL
+        // v11.20: 登录窗口直接打开直播大屏页（compass域）——未登录时页面内会显示扫码验证框，
+        // 扫码即登录该域，登录后大屏自动显示数据。无需在 douyinec 官网点链接跳转（那是死路）。
+        loginURL = compassURL
         showLoginSheet = true
-        addLog("🔐 手动登录：打开 douyinec.com，登录后自己跳转到大屏页，完成点右上角✓")
+        addLog("🔐 手动登录：已打开直播大屏页，若提示扫码请用抖音扫码，完成后点✓")
     }
 
     /// 重新加载采集页（登录成功后刷新 Cookie/登录态）
