@@ -33,6 +33,6 @@ struct BroadcastEntry: Identifiable {
 }
 
 // MARK: - 全局配置（真机版）
-let kServerHost = "59.110.152.66"      // 2号测试服务器
+let kServerHost = "39.96.2.213"      // 生产服务器（安卓采集/管理后台/bark_key 都在这里）
 let kServerPort = 18766
 let kDeviceIdKey = "ailive_iphone_device_id"   // UserDefaults 存储设备ID

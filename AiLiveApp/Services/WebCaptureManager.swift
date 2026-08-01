@@ -26,6 +26,11 @@ class WebCaptureManager: NSObject, ObservableObject {
     private var deviceId: String = ""
     private var serverHost = kServerHost
     private var serverPort = kServerPort
+    /// 发数据用的 pid：优先用用户填的目标手机/绑定的安卓手机（服务器才能查到 bark_key/配置），否则用自身 deviceId
+    private var effectivePid: String {
+        let target = WebSocketManager.shared.effectiveTargetPid
+        return target.isEmpty ? deviceId : target
+    }
     private var seenKeys = Set<String>()     // 评论去重
     private var timer: Timer?                // 状态检查
     var loginDetectCount = 0
@@ -372,7 +377,7 @@ class WebCaptureManager: NSObject, ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
         let json: [String: Any] = [
-            "phone_id": deviceId,
+            "phone_id": effectivePid,
             "text": text,
             "type": "core_data"
         ]
@@ -409,7 +414,7 @@ class WebCaptureManager: NSObject, ObservableObject {
         request.timeoutInterval = 10
 
         let json: [String: Any] = [
-            "phone_id": deviceId,
+            "phone_id": effectivePid,
             "text": text,
             "type": "danmaku"
         ]
@@ -435,7 +440,7 @@ class WebCaptureManager: NSObject, ObservableObject {
         request.timeoutInterval = 10
 
         let json: [String: Any] = [
-            "phone_id": deviceId,
+            "phone_id": effectivePid,
             "text": "\(nick)下单\(product)",
             "type": "order",
             "nick": nick,

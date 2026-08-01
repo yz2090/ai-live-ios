@@ -17,6 +17,26 @@ class WebSocketManager: NSObject, ObservableObject {
         }
     }
 
+    // 绑定的安卓手机 pid（服务器 bound 消息回传；发数据时用绑定pid，服务器才能查到bark_key）
+    @Published var boundPid: String = "" {
+        didSet {
+            UserDefaults.standard.set(boundPid, forKey: "ailive_bound_pid")
+        }
+    }
+
+    // 用户手动填的目标手机 pid（优先于 boundPid）
+    @Published var targetPid: String = "" {
+        didSet {
+            UserDefaults.standard.set(targetPid, forKey: "ailive_target_pid")
+        }
+    }
+
+    /// 实际使用的目标 pid：手动填的 > 绑定的 > 空（用本机）
+    var effectiveTargetPid: String {
+        if !targetPid.isEmpty { return targetPid }
+        return boundPid
+    }
+
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private var pingTimer: Timer?
@@ -32,6 +52,12 @@ class WebSocketManager: NSObject, ObservableObject {
         } else {
             deviceId = "iphone_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(14).lowercased()
             UserDefaults.standard.set(deviceId, forKey: kDeviceIdKey)
+        }
+        if let savedPid = UserDefaults.standard.string(forKey: "ailive_bound_pid"), !savedPid.isEmpty {
+            boundPid = savedPid
+        }
+        if let savedTarget = UserDefaults.standard.string(forKey: "ailive_target_pid"), !savedTarget.isEmpty {
+            targetPid = savedTarget
         }
     }
 
@@ -160,7 +186,11 @@ class WebSocketManager: NSObject, ObservableObject {
         case "welcome":
             addLog("👋 服务器欢迎，设备ID: \(deviceId)")
         case "bound":
-            addLog("🔗 已绑定安卓手机: \(json["pid"] as? String ?? "")")
+            let pid = json["pid"] as? String ?? ""
+            if !pid.isEmpty {
+                boundPid = pid
+                addLog("🔗 已绑定安卓手机: \(pid)")
+            }
         case "pong":
             break
         default:
