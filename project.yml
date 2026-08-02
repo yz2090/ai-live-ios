@@ -1,0 +1,47 @@
+name: AiLiveLite
+options:
+  bundleIdPrefix: com.ailive
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+targets:
+  AiLiveLite:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: AiLiveLite
+        excludes:
+          - "Info.plist"
+    info:
+      path: AiLiveLite/Info.plist
+      properties:
+        CFBundleName: AI播放端
+        CFBundleDisplayName: AI播放端
+        CFBundleIdentifier: com.ailive.liteplayer
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: 1.0.0
+        CFBundlePackageType: APPL
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UIBackgroundModes:
+          - audio
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ailive.liteplayer
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_FILE: AiLiveLite/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_VERSION: "5.0"
+        ENABLE_BITCODE: NO
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    scheme:
+      testTargets: []
