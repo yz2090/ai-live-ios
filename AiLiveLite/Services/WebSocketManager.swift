@@ -36,7 +36,7 @@ class WebSocketManager: NSObject, ObservableObject {
         if let saved = UserDefaults.standard.string(forKey: kDeviceIdKey), !saved.isEmpty {
             deviceId = saved
         } else {
-            deviceId = "iphone_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(14).lowercased()
+            deviceId = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6).lowercased())
             UserDefaults.standard.set(deviceId, forKey: kDeviceIdKey)
         }
     }
