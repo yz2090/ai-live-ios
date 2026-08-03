@@ -130,12 +130,12 @@ class AudioPlayerService: NSObject, ObservableObject {
         do {
             bgmPlayer = try AVAudioPlayer(contentsOf: url)
             bgmPlayer?.delegate = self
-            bgmPlayer?.numberOfLoops = 0
+            bgmPlayer?.numberOfLoops = -1   // 单曲无限循环：完全不依赖播完回调，后台保活最稳
             bgmPlayer?.volume = isMuted ? 0 : musicVolume
             bgmPlayer?.prepareToPlay()
             bgmPlayer?.play()
             isMusicPlaying = true
-            print("[AiLiveLite] 🎵 背景音乐: \(url.lastPathComponent)")
+            print("[AiLiveLite] 🎵 背景音乐(循环): \(url.lastPathComponent)")
         } catch {
             print("[AiLiveLite] 背景音乐失败: \(error)")
             musicIndex += 1
