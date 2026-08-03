@@ -109,6 +109,65 @@ struct ContentView: View {
 
                 // ── 背景音乐（后台保活 + 直播背景音乐）──
                 Section {
+                    // 从「文件」App 选择音乐（支持多选）
+                    Button {
+                        // iOS15 SwiftUI fileImporter 有 bug 不弹窗，改用 UIKit 原生选择器
+                        MusicDocumentPicker.shared.present(
+                            from: UIApplication.topViewController(),
+                            allowedTypes: [.audio]
+                        ) { urls in
+                            var imported = 0
+                            for url in urls {
+                                let ext = url.pathExtension.lowercased()
+                                guard ["mp3", "m4a", "wav", "aac", "flac", "caf"].contains(ext) else {
+                                    continue
+                                }
+                                audioPlayer.importMusic(from: url)
+                                imported += 1
+                            }
+                            if imported == 0 {
+                                audioPlayer.lastImportError = "未找到支持的音频文件（mp3/m4a/wav）"
+                            }
+                        }
+                    } label: {
+                        Label("从文件选择音乐", systemImage: "folder")
+                    }
+
+                    if let errMsg = audioPlayer.lastImportError {
+                        Text(errMsg)
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+
+                    // 音乐列表
+                    if audioPlayer.musicFiles.isEmpty {
+                        Text("还没有音乐，点击上方按钮从「文件」App 选择（可多选）")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(Array(audioPlayer.musicFiles.enumerated()), id: \.offset) { index, url in
+                            HStack {
+                                Image(systemName: "music.note")
+                                    .foregroundColor(.brown)
+                                Text(url.lastPathComponent)
+                                    .lineLimit(1)
+                                Spacer()
+                                if audioPlayer.isMusicPlaying && index == audioPlayer.currentMusicIndex {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .foregroundColor(.green)
+                                }
+                                Button {
+                                    audioPlayer.removeMusic(at: index)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
+
+                    // 开关 + 播放控制
                     Toggle("背景音乐", isOn: Binding(
                         get: { audioPlayer.isMusicPlaying },
                         set: { _ in audioPlayer.toggleMusic() }
@@ -143,10 +202,6 @@ struct ContentView: View {
                                 set: { audioPlayer.setMusicVolume($0) }
                             ), in: 0...1)
                         }
-                    } else {
-                        Text("⚠️ 未检测到音乐文件\n请用「文件」App导入 mp3/m4a 到本App的 Music 文件夹（在文件App里打开本App文件夹即可看到）。播放音乐可保持App后台运行不断线。")
-                            .font(.caption)
-                            .foregroundColor(.orange)
                     }
                 } header: {
                     Label("背景音乐（后台保活）", systemImage: "music.note")

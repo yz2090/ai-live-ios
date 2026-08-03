@@ -11,6 +11,9 @@ class AudioPlayerService: NSObject, ObservableObject {
     @Published var isMusicPlaying = false
     @Published var currentMusicName = ""          // 当前音乐文件名
     @Published var musicFileCount = 0             // 扫描到的音乐数量
+    @Published var currentMusicIndex = 0          // 当前播放的音乐序号
+    @Published var lastImportError: String? = nil // 导入失败提示
+    @Published var musicFiles: [URL] = []         // 背景音乐列表（公开给UI显示）
     @Published var ttsVolume: Float {
         didSet { UserDefaults.standard.set(ttsVolume, forKey: "ailive_lite_tts_volume") }
     }
@@ -26,7 +29,6 @@ class AudioPlayerService: NSObject, ObservableObject {
     private var keepAlivePlayer: AVAudioPlayer? // 无音乐时的静音保活兜底
     private var audioQueue: [Data] = []          // TTS 音频队列
     private var isPlayingQueue = false
-    private var musicFiles: [URL] = []           // 背景音乐列表
     private var musicIndex = 0
 
     private var musicDirectory: URL {
@@ -72,7 +74,6 @@ class AudioPlayerService: NSObject, ObservableObject {
         musicFileCount = musicFiles.count
         print("[AiLiveLite] 背景音乐 \(musicFiles.count) 首: \(musicFiles.map { $0.lastPathComponent })")
     }
-
     /// 从文件App导入音乐（复制到沙盒Music目录，持久保存）
     func importMusic(from url: URL) {
         let didAccess = url.startAccessingSecurityScopedResource()
@@ -117,6 +118,7 @@ class AudioPlayerService: NSObject, ObservableObject {
         if musicIndex >= musicFiles.count { musicIndex = 0 }
         let url = musicFiles[musicIndex]
         currentMusicName = url.lastPathComponent
+        currentMusicIndex = musicIndex
         do {
             bgmPlayer = try AVAudioPlayer(contentsOf: url)
             bgmPlayer?.delegate = self
