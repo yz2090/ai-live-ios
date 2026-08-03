@@ -44,6 +44,10 @@ class AudioPlayerService: NSObject, ObservableObject {
         super.init()
         setupAudioSession()
         loadMusicFromDocuments()
+        // 有音乐文件则自动开始播放（后台保活 + 无需手动开开关）
+        if !musicFiles.isEmpty {
+            startMusic()
+        }
     }
 
     private func setupAudioSession() {
@@ -87,6 +91,10 @@ class AudioPlayerService: NSObject, ObservableObject {
             try fm.copyItem(at: url, to: dest)
             loadMusicFromDocuments()
             print("[AiLiveLite] 🎵 已导入音乐: \(url.lastPathComponent)")
+            // 有音乐了自动开始播放（后台保活需要）
+            if !isMusicPlaying && !musicFiles.isEmpty {
+                startMusic()
+            }
         } catch {
             print("[AiLiveLite] 导入音乐失败: \(error)")
         }
