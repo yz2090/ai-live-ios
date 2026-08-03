@@ -2,26 +2,46 @@ import Foundation
 import AVFAudio
 import Combine
 
-// MARK: - 音频播放服务（精简播放端：只播 TTS 语音队列 + 后台保活）
+// MARK: - 音频播放服务（精简播放端：TTS 语音队列 + 背景音乐循环保活）
 class AudioPlayerService: NSObject, ObservableObject {
     static let shared = AudioPlayerService()
 
     @Published var isPlaying = false
     @Published var isMuted = false
+    @Published var isMusicPlaying = false
+    @Published var currentMusicName = ""          // 当前音乐文件名
+    @Published var musicFileCount = 0             // 扫描到的音乐数量
     @Published var ttsVolume: Float {
         didSet { UserDefaults.standard.set(ttsVolume, forKey: "ailive_lite_tts_volume") }
     }
+    @Published var musicVolume: Float {
+        didSet {
+            UserDefaults.standard.set(musicVolume, forKey: "ailive_lite_music_volume")
+            bgmPlayer?.volume = musicVolume
+        }
+    }
 
     private var player: AVAudioPlayer?          // TTS 播放器
-    private var keepAlivePlayer: AVAudioPlayer? // 后台静音保活播放器（防止iOS挂起）
+    private var bgmPlayer: AVAudioPlayer?       // 背景音乐播放器（后台保活核心）
+    private var keepAlivePlayer: AVAudioPlayer? // 无音乐时的静音保活兜底
     private var audioQueue: [Data] = []          // TTS 音频队列
     private var isPlayingQueue = false
+    private var musicFiles: [URL] = []           // 背景音乐列表
+    private var musicIndex = 0
+
+    private var musicDirectory: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("Music", isDirectory: true)
+    }
 
     override private init() {
         let savedTts = UserDefaults.standard.object(forKey: "ailive_lite_tts_volume") as? Float ?? 1.0
+        let savedMusic = UserDefaults.standard.object(forKey: "ailive_lite_music_volume") as? Float ?? 0.7
         ttsVolume = savedTts
+        musicVolume = savedMusic
         super.init()
         setupAudioSession()
+        loadMusicFromDocuments()
     }
 
     private func setupAudioSession() {
@@ -36,6 +56,104 @@ class AudioPlayerService: NSObject, ObservableObject {
         }
     }
 
+    // ── 背景音乐：从 App 沙盒 Music 目录扫描（用户通过文件App导入）──
+    private func loadMusicFromDocuments() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
+        guard let files = try? fm.contentsOfDirectory(at: musicDirectory, includingPropertiesForKeys: nil) else {
+            musicFiles = []
+            musicFileCount = 0
+            return
+        }
+        let audioExts = ["mp3", "m4a", "wav", "aac", "flac", "caf"]
+        musicFiles = files
+            .filter { audioExts.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        musicFileCount = musicFiles.count
+        print("[AiLiveLite] 背景音乐 \(musicFiles.count) 首: \(musicFiles.map { $0.lastPathComponent })")
+    }
+
+    /// 从文件App导入音乐（复制到沙盒Music目录，持久保存）
+    func importMusic(from url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+
+        let fm = FileManager.default
+        try? fm.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
+        let dest = musicDirectory.appendingPathComponent(url.lastPathComponent)
+        try? fm.removeItem(at: dest)  // 重名覆盖
+        do {
+            try fm.copyItem(at: url, to: dest)
+            loadMusicFromDocuments()
+            print("[AiLiveLite] 🎵 已导入音乐: \(url.lastPathComponent)")
+        } catch {
+            print("[AiLiveLite] 导入音乐失败: \(error)")
+        }
+    }
+
+    /// 删除一首音乐（正在播放则停止）
+    func removeMusic(at index: Int) {
+        guard index < musicFiles.count else { return }
+        let url = musicFiles[index]
+        if bgmPlayer?.url?.standardizedFileURL == url.standardizedFileURL {
+            stopMusic()
+        }
+        try? FileManager.default.removeItem(at: url)
+        loadMusicFromDocuments()
+    }
+
+    func startMusic() {
+        guard !musicFiles.isEmpty else {
+            print("[AiLiveLite] 无背景音乐，保持静音保活")
+            return
+        }
+        stopMusic()
+        musicIndex = 0
+        playMusic()
+    }
+
+    private func playMusic() {
+        guard !musicFiles.isEmpty else { return }
+        if musicIndex >= musicFiles.count { musicIndex = 0 }
+        let url = musicFiles[musicIndex]
+        currentMusicName = url.lastPathComponent
+        do {
+            bgmPlayer = try AVAudioPlayer(contentsOf: url)
+            bgmPlayer?.delegate = self
+            bgmPlayer?.numberOfLoops = 0
+            bgmPlayer?.volume = isMuted ? 0 : musicVolume
+            bgmPlayer?.prepareToPlay()
+            bgmPlayer?.play()
+            isMusicPlaying = true
+            print("[AiLiveLite] 🎵 背景音乐: \(url.lastPathComponent)")
+        } catch {
+            print("[AiLiveLite] 背景音乐失败: \(error)")
+            musicIndex += 1
+            playMusic()
+        }
+    }
+
+    func stopMusic() {
+        bgmPlayer?.stop()
+        bgmPlayer = nil
+        isMusicPlaying = false
+        currentMusicName = ""
+    }
+
+    func toggleMusic() {
+        if isMusicPlaying {
+            stopMusic()
+        } else {
+            startMusic()
+        }
+    }
+
+    func nextMusic() {
+        guard !musicFiles.isEmpty else { return }
+        musicIndex += 1
+        playMusic()
+    }
+
     // ── TTS 播放队列 ──
     func enqueueAudio(_ data: Data) {
         guard data.count > 100 else { return }
@@ -47,11 +165,13 @@ class AudioPlayerService: NSObject, ObservableObject {
         guard !audioQueue.isEmpty else {
             isPlayingQueue = false
             isPlaying = false
+            unduckMusic()
             return
         }
         let data = audioQueue.removeFirst()
         isPlayingQueue = true
         isPlaying = true
+        duckMusic()
 
         do {
             player = try AVAudioPlayer(data: data)
@@ -62,8 +182,22 @@ class AudioPlayerService: NSObject, ObservableObject {
             print("[AiLiveLite] ▶ TTS播放 (\(data.count) 字节)")
         } catch {
             print("[AiLiveLite] TTS播放失败: \(error)")
+            unduckMusic()
             playNext()
         }
+    }
+
+    // ── TTS 播报时背景音乐自动降低音量（duck 效果）──
+    private func duckMusic() {
+        guard bgmPlayer?.isPlaying == true else { return }
+        bgmPlayer?.setVolume(musicVolume * 0.2, fadeDuration: 0.3)
+        print("[AiLiveLite] 🎚 背景音乐降低音量 (TTS播报)")
+    }
+
+    private func unduckMusic() {
+        guard bgmPlayer != nil else { return }
+        bgmPlayer?.setVolume(isMuted ? 0 : musicVolume, fadeDuration: 0.5)
+        print("[AiLiveLite] 🎚 背景音乐恢复音量")
     }
 
     func clearQueue() {
@@ -77,6 +211,7 @@ class AudioPlayerService: NSObject, ObservableObject {
     func setMuted(_ muted: Bool) {
         isMuted = muted
         player?.volume = muted ? 0 : ttsVolume
+        bgmPlayer?.volume = muted ? 0 : musicVolume
     }
 
     func setTtsVolume(_ vol: Float) {
@@ -84,41 +219,50 @@ class AudioPlayerService: NSObject, ObservableObject {
         if !isMuted { player?.volume = vol }
     }
 
-    // MARK: - 后台保活（静音音频循环，防止iOS挂起）
-    /// APP进后台时调用：播放静音保持音频会话活跃，WebSocket不断线
+    func setMusicVolume(_ vol: Float) {
+        musicVolume = vol
+        if !isMuted { bgmPlayer?.volume = vol }
+    }
+
+    // MARK: - 后台保活（优先背景音乐循环，无音乐则静音WAV兜底）
+    /// APP进后台时调用：确保有音频在播放，iOS不挂起，WebSocket不断线
     func startBackgroundKeepAlive() {
+        // 有背景音乐且正在播 → 天然保活，无需额外处理
+        if bgmPlayer?.isPlaying == true { return }
+        // 有音乐但没在播 → 启动音乐
+        if !musicFiles.isEmpty {
+            startMusic()
+            return
+        }
+        // 无音乐 → 静音WAV兜底
         guard keepAlivePlayer == nil else { return }
         do {
-            // 生成 0.5 秒静音 WAV（AVAudioPlayer 需要标准WAV头，裸PCM播不了）
             let duration: Double = 0.5
             let sampleRate: Int = 8000
             let frameCount = Int(duration * Double(sampleRate))
             var wav = Data()
-            // RIFF 头
             wav.append(contentsOf: Array("RIFF".utf8))
-            let dataSize = frameCount * 2  // 16bit 单声道
+            let dataSize = frameCount * 2
             let riffSize = 36 + dataSize
             wav.append(contentsOf: littleEndianUInt32(UInt32(riffSize)))
             wav.append(contentsOf: Array("WAVE".utf8))
-            // fmt 块
             wav.append(contentsOf: Array("fmt ".utf8))
-            wav.append(contentsOf: littleEndianUInt32(16))          // fmt 块大小
-            wav.append(contentsOf: littleEndianUInt16(1))           // PCM
-            wav.append(contentsOf: littleEndianUInt16(1))           // 单声道
+            wav.append(contentsOf: littleEndianUInt32(16))
+            wav.append(contentsOf: littleEndianUInt16(1))
+            wav.append(contentsOf: littleEndianUInt16(1))
             wav.append(contentsOf: littleEndianUInt32(UInt32(sampleRate)))
-            wav.append(contentsOf: littleEndianUInt32(UInt32(sampleRate * 2))) // 字节率
-            wav.append(contentsOf: littleEndianUInt16(2))           // 块对齐
-            wav.append(contentsOf: littleEndianUInt16(16))          // 位深
-            // data 块
+            wav.append(contentsOf: littleEndianUInt32(UInt32(sampleRate * 2)))
+            wav.append(contentsOf: littleEndianUInt16(2))
+            wav.append(contentsOf: littleEndianUInt16(16))
             wav.append(contentsOf: Array("data".utf8))
             wav.append(contentsOf: littleEndianUInt32(UInt32(dataSize)))
             for _ in 0..<frameCount {
-                wav.append(0)  // 静音采样
+                wav.append(0)
                 wav.append(0)
             }
             let player = try AVAudioPlayer(data: wav)
             player.volume = 0
-            player.numberOfLoops = -1  // 无限循环
+            player.numberOfLoops = -1
             player.prepareToPlay()
             player.play()
             keepAlivePlayer = player
@@ -137,7 +281,7 @@ class AudioPlayerService: NSObject, ObservableObject {
         return [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
     }
 
-    /// APP回前台时调用：停止静音保活
+    /// APP回前台时调用：停止静音保活（背景音乐保留播放）
     func stopBackgroundKeepAlive() {
         keepAlivePlayer?.stop()
         keepAlivePlayer = nil
@@ -147,7 +291,15 @@ class AudioPlayerService: NSObject, ObservableObject {
 // MARK: - AVAudioPlayerDelegate
 extension AudioPlayerService: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        if player !== keepAlivePlayer {
+        if player === bgmPlayer {
+            // 背景音乐播完，切下一首循环
+            musicIndex += 1
+            playMusic()
+        } else if player !== keepAlivePlayer {
+            // TTS 播完，播下一条
+            if audioQueue.isEmpty {
+                unduckMusic()
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.playNext()
             }

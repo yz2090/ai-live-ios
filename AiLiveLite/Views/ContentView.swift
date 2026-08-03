@@ -107,6 +107,51 @@ struct ContentView: View {
                     Label("声音控制", systemImage: "speaker.wave.2")
                 }
 
+                // ── 背景音乐（后台保活 + 直播背景音乐）──
+                Section {
+                    Toggle("背景音乐", isOn: Binding(
+                        get: { audioPlayer.isMusicPlaying },
+                        set: { _ in audioPlayer.toggleMusic() }
+                    ))
+                    .disabled(audioPlayer.musicFileCount == 0)
+
+                    if audioPlayer.musicFileCount > 0 {
+                        HStack {
+                            Text("当前")
+                            Spacer()
+                            Text(audioPlayer.currentMusicName)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                            Button {
+                                audioPlayer.nextMusic()
+                            } label: {
+                                Image(systemName: "forward.end.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(!audioPlayer.isMusicPlaying)
+                        }
+
+                        VStack(spacing: 4) {
+                            HStack {
+                                Text("音乐音量")
+                                Spacer()
+                                Text("\(Int(audioPlayer.musicVolume * 100))%")
+                                    .foregroundColor(.secondary)
+                            }
+                            Slider(value: Binding(
+                                get: { audioPlayer.musicVolume },
+                                set: { audioPlayer.setMusicVolume($0) }
+                            ), in: 0...1)
+                        }
+                    } else {
+                        Text("⚠️ 未检测到音乐文件\n请用「文件」App导入 mp3/m4a 到本App的 Music 文件夹（在文件App里打开本App文件夹即可看到）。播放音乐可保持App后台运行不断线。")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                } header: {
+                    Label("背景音乐（后台保活）", systemImage: "music.note")
+                }
+
                 // ── 日志 ──
                 Section {
                     ScrollView {
