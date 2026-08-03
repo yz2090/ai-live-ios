@@ -59,10 +59,12 @@ class WebSocketManager: NSObject, ObservableObject {
             return
         }
 
-        // 清理旧连接（不触发回调风暴）
+        // 清理旧连接（不触发回调风暴）——彻底关闭旧 session，避免连接/session 堆积
         let oldTask = webSocketTask
         webSocketTask = nil
         oldTask?.cancel(with: .goingAway, reason: nil)
+        session?.invalidateAndCancel()
+        session = nil
 
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
