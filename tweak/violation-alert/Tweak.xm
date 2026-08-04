@@ -135,8 +135,10 @@ static BOOL gTestAlertShown = NO;
         }
     }
     if (!keyWindow) {
-        // 兜底：老 API
-        keyWindow = [UIApplication sharedApplication].keyWindow;
+        // 兜底：遍历所有 window 拿 rootViewController
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.rootViewController) { keyWindow = w; break; }
+        }
     }
     UIViewController *top = keyWindow.rootViewController;
     while (top.presentedViewController) {
