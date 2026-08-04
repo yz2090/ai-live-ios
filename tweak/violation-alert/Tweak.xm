@@ -135,7 +135,18 @@ static BOOL gTestAlertShown = NO;
                                                                           message:@"【ViolationAlert测试】人脸识别验证，请完成验证后继续直播。这是一条模拟违规弹窗，用于验证检测链路。"
                                                                    preferredStyle:UIAlertControllerStyleAlert];
         [testAlert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+        // iOS 13+ 多场景：用 connectedScenes 拿 keyWindow（避免 keyWindow 弃用警告）
+        UIWindow *keyWindow = nil;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                UIWindowScene *ws = (UIWindowScene *)scene;
+                for (UIWindow *w in ws.windows) {
+                    if (w.isKeyWindow) { keyWindow = w; break; }
+                }
+                if (keyWindow) break;
+            }
+        }
+        UIViewController *root = keyWindow.rootViewController;
         if (root) {
             [root presentViewController:testAlert animated:YES completion:nil];
         }
