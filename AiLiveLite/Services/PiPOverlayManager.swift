@@ -68,8 +68,6 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         )
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
-        // 关键：切后台时系统自动启动 PiP（官方机制，比手动延迟调用稳）
-        controller.canStartPictureInPictureAutomaticallyWhenEnteringBackground = true
         pipController = controller
         isPiPAvailable = true
 
@@ -293,6 +291,7 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             if self.autoStartEnabled && self.pipController?.isPictureInPictureActive == false {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     guard self.autoStartEnabled, self.pipController?.isPictureInPictureActive == false else { return }
+                    print("[PiP] 后台自动启动请求: possible=\(self.pipController?.isPictureInPicturePossible ?? false)")
                     self.startPiP()
                 }
             }
