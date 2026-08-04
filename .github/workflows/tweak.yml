@@ -17,21 +17,19 @@ jobs:
         run: |
           export THEOS=~/theos
           git clone --recursive --depth 1 https://github.com/theos/theos.git $THEOS
-          # 下载 iOS SDK（Theos 需要）
-          cd $THEOS
-          curl -sLO https://github.com/xybp888/iOS-SDKs/releases/download/15.0/iPhoneOS15.0.sdk.tar.xz
-          mkdir -p sdks
-          tar -xJf iPhoneOS15.0.sdk.tar.xz -C sdks/
-          ls sdks/
 
-      - name: Build Tweak
+      - name: Build Tweak (用 Xcode 自带 SDK)
         run: |
           export THEOS=~/theos
+          # 找 Xcode 里的 iOS SDK
+          SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK: $SDK_PATH"
+          # Theos 会自动探测 Xcode SDK，无需额外下载
           cd tweak/violation-alert
           make clean
           make package
-          ls -la
-          find . -name "*.deb" | head -5
+          echo "=== 产物 ==="
+          find . -name "*.deb" -exec ls -la {} \;
 
       - name: Upload DEB
         uses: actions/upload-artifact@v4
