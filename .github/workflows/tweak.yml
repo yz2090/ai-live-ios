@@ -44,4 +44,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ViolationAlert-deb
-          path: tweak/violation-alert/*.deb
+          path: tweak/violation-alert/packages/*.deb
