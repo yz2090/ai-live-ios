@@ -6,14 +6,22 @@
 // 功能：Hook UIAlertController，检测到违规/人脸识别等弹窗
 //       → POST 到服务器 /api/violation_report → Bark 推送
 // 配置：/var/mobile/Library/Preferences/com.ailive.violationalert.plist
-//       { device_id: "iPhone播放端6位ID", server: "http://59.110.152.66:18766" }
+//   {
+//     device_id: "iPhone播放端6位ID",   // 必填
+//     server: "http://59.110.152.66:18766",
+//     test_mode: true,                  // 测试模式：自动弹测试窗+所有弹窗都上报
+//     keywords: ["自定义词1", ...]       // 可选：覆盖默认关键词表
+//   }
 // ============================================================
 
 static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.violationalert.plist";
+static BOOL gTestMode = NO;
+static BOOL gTestAlertShown = NO;
 
 @interface ViolationAlertHelper : NSObject
 + (instancetype)shared;
 - (void)checkAlert:(UIAlertController *)alert;
+- (void)showTestAlert;
 @end
 
 @implementation ViolationAlertHelper
@@ -36,7 +44,7 @@ static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.viola
 
 // 关键词匹配（命中任意一个即报警）
 - (BOOL)matchKeyword:(NSString *)text {
-    NSArray *keywords = @[
+    NSArray *defaultKeywords = @[
         @"人脸识别", @"人脸验证", @"身份验证", @"实名认证",
         @"违规", @"违规内容", @"涉嫌违规", @"违反",
         @"警告", @"提醒", @"封禁", @"禁播", @"限流",
@@ -45,8 +53,14 @@ static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.viola
         @"未成年人", @"青少年模式", @"低俗", @"涉黄", @"涉政",
         @"停止直播", @"暂时无法", @"操作频繁"
     ];
+    // 支持 plist 里自定义关键词覆盖
+    NSDictionary *cfg = [self loadConfig];
+    NSArray *keywords = cfg[@"keywords"];
+    if (![keywords isKindOfClass:[NSArray class]] || keywords.count == 0) {
+        keywords = defaultKeywords;
+    }
     for (NSString *kw in keywords) {
-        if ([text containsString:kw]) return YES;
+        if ([kw isKindOfClass:[NSString class]] && [text containsString:kw]) return YES;
     }
     return NO;
 }
@@ -96,12 +110,36 @@ static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.viola
     full = [full stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!full.length) return;
 
-    // 只处理系统弹窗（title 为空且 message 非空的可能是 toast，也匹配）
+    // 测试模式：任何弹窗都上报
+    if (gTestMode) {
+        NSLog(@"[ViolationAlert] [测试模式] 弹窗: %@", full);
+        NSString *appName = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        [self reportToServer:full app:appName];
+        return;
+    }
+
+    // 正常模式：关键词匹配
     if ([self matchKeyword:full]) {
         NSLog(@"[ViolationAlert] 🚨 检测到违规弹窗: %@", full);
         NSString *appName = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
         [self reportToServer:full app:appName];
     }
+}
+
+// 测试模式：自动弹一个模拟违规弹窗（验证全链路）
+- (void)showTestAlert {
+    if (gTestAlertShown) return;
+    gTestAlertShown = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIAlertController *testAlert = [UIAlertController alertControllerWithTitle:@"测试弹窗"
+                                                                          message:@"【ViolationAlert测试】人脸识别验证，请完成验证后继续直播。这是一条模拟违规弹窗，用于验证检测链路。"
+                                                                   preferredStyle:UIAlertControllerStyleAlert];
+        [testAlert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+        if (root) {
+            [root presentViewController:testAlert animated:YES completion:nil];
+        }
+    });
 }
 
 @end
@@ -119,4 +157,13 @@ static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.viola
 
 %ctor {
     NSLog(@"[ViolationAlert] 违规弹窗检测已加载 ✅");
+    NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
+    gTestMode = [cfg[@"test_mode"] boolValue];
+    if (gTestMode) {
+        NSLog(@"[ViolationAlert] 🔧 测试模式开启：自动弹测试窗 + 所有弹窗上报");
+        // 延迟几秒等抖音界面就绪后弹测试窗
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [[ViolationAlertHelper shared] showTestAlert];
+        });
+    }
 }
