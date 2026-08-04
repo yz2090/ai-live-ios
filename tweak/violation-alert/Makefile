@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = ViolationAlert
 
 ViolationAlert_FILES = Tweak.xm
-ViolationAlert_CFLAGS = -fobjc-arc
+ViolationAlert_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 ViolationAlert_FRAMEWORKS = UIKit Foundation
 ViolationAlert_LIBRARIES = 
 
