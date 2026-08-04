@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var wsManager: WebSocketManager
     @EnvironmentObject var audioPlayer: AudioPlayerService
+    @EnvironmentObject var pipManager: PiPOverlayManager
 
     var body: some View {
         NavigationView {
@@ -38,6 +39,46 @@ struct ContentView: View {
                     .padding(.vertical, 4)
                 } header: {
                     Label("连接状态", systemImage: "antenna.radiowaves.left.and.right")
+                }
+
+                // ── 画中画悬浮窗（PiP）──
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("后台自动开启悬浮窗", isOn: Binding(
+                            get: { pipManager.autoStartEnabled },
+                            set: { pipManager.setAutoStart($0) }
+                        ))
+
+                        HStack {
+                            if !pipManager.isPiPAvailable {
+                                Text("此设备不支持画中画")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            } else {
+                                Text(pipManager.isPiPActive ? "悬浮窗显示中" : "悬浮窗未开启")
+                                    .font(.caption)
+                                    .foregroundColor(pipManager.isPiPActive ? .green : .secondary)
+                            }
+                            Spacer()
+                            Button(pipManager.isPiPActive ? "关闭悬浮窗" : "开启悬浮窗") {
+                                if pipManager.isPiPActive {
+                                    pipManager.stopPiP()
+                                } else {
+                                    pipManager.startPiP()
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.blue)
+                            .disabled(!pipManager.isPiPAvailable)
+                        }
+
+                        Text("开启后，切到其它App时播报内容会显示在系统悬浮窗里（可拖到屏幕四角吸附）。")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Label("画中画悬浮窗", systemImage: "pip")
                 }
 
                 // ── 设备ID ──

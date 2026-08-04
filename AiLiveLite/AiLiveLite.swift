@@ -5,6 +5,7 @@ import AVFAudio
 struct AiLiveLiteApp: App {
     @StateObject private var wsManager = WebSocketManager.shared
     @StateObject private var audioPlayer = AudioPlayerService.shared
+    @StateObject private var pipManager = PiPOverlayManager.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -12,9 +13,12 @@ struct AiLiveLiteApp: App {
             ContentView()
                 .environmentObject(wsManager)
                 .environmentObject(audioPlayer)
+                .environmentObject(pipManager)
                 .onAppear {
                     // 启动时自动连接
                     wsManager.connect()
+                    // 初始化画中画（PiP）悬浮窗
+                    pipManager.setup()
                 }
         }
     }
@@ -37,6 +41,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     // 后台时保持连接：播放静音音频防止iOS挂起
     func applicationDidEnterBackground(_ application: UIApplication) {
         AudioPlayerService.shared.startBackgroundKeepAlive()
+        // PiP 进后台自动悬浮（如果用户开启了自动开关）
+        PiPOverlayManager.shared.setup()
     }
 
     // 回前台：停止静音保活

@@ -1,0 +1,310 @@
+import UIKit
+import AVKit
+import AVFoundation
+import CoreMedia
+import CoreVideo
+import QuartzCore
+import Combine
+
+// MARK: - 画中画（PiP）悬浮窗管理器
+/// 通过 AVPictureInPictureController + AVSampleBufferDisplayLayer
+/// 把「最近播报文字」渲染成系统级悬浮窗，可吸附屏幕四角，悬浮在其它App上层。
+/// iOS 15+ 通用方案（App Store 合规，无需审核特批）。
+final class PiPOverlayManager: NSObject, ObservableObject {
+    static let shared = PiPOverlayManager()
+
+    @Published var isPiPActive = false       // 当前 PiP 是否在显示
+    @Published var isPiPAvailable = false    // 当前设备是否支持 PiP（模拟器不支持）
+    @Published var autoStartEnabled = true   // 后台自动开启 PiP
+
+    private var pipController: AVPictureInPictureController?
+    private var displayLayer: AVSampleBufferDisplayLayer?
+    private var renderTimer: CADisplayLink?
+    private var lastText = ""
+    private var lastType = ""
+    private var lastRenderedHash = 0
+    private var observers: [NSObjectProtocol] = []
+    private var pendingStart = false
+
+    // 渲染尺寸（16:9 画中画窗口宽高比），pt 单位
+    private let renderWidth: CGFloat = 360
+    private let renderHeight: CGFloat = 202
+
+    // 订阅 WS 的播报文字变化
+    private var wsCancellable: AnyCancellable?
+
+    private override init() {
+        super.init()
+        autoStartEnabled = UserDefaults.standard.object(forKey: "ailive_lite_pip_auto") as? Bool ?? true
+    }
+
+    // MARK: - 生命周期：App 启动后调用一次
+    func setup() {
+        guard AVPictureInPictureController.isPictureInPictureSupported() else {
+            print("[PiP] 设备不支持画中画")
+            return
+        }
+        guard pipController == nil else { return }
+
+        // 渲染层
+        let layer = AVSampleBufferDisplayLayer()
+        layer.videoGravity = .resizeAspectFill
+        layer.backgroundColor = UIColor.black.cgColor
+        layer.frame = CGRect(x: 0, y: 0, width: renderWidth, height: renderHeight)
+        displayLayer = layer
+
+        let source = AVPictureInPictureController.ContentSource(
+            sampleBufferDisplayLayer: layer,
+            playbackDelegate: self
+        )
+        let controller = AVPictureInPictureController(contentSource: source)
+        controller.delegate = self
+        pipController = controller
+        isPiPAvailable = true
+
+        // 订阅播报文字
+        wsCancellable = WebSocketManager.shared.$lastMetaText
+            .combineLatest(WebSocketManager.shared.$lastMetaType)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] text, type in
+                self?.updateContent(text: text, type: type)
+            }
+
+        addObservers()
+        renderInitialFrame()
+
+        print("[PiP] 初始化完成，自动开启: \(autoStartEnabled)")
+    }
+
+    // MARK: - 公开控制
+    func startPiP() {
+        guard let pip = pipController, pip.isPictureInPicturePossible else {
+            print("[PiP] 暂不可启动（未连接/无内容/不支持）")
+            return
+        }
+        if !pip.isPictureInPictureActive {
+            pip.startPictureInPicture()
+            print("[PiP] 启动画中画")
+        }
+    }
+
+    func stopPiP() {
+        pipController?.stopPictureInPicture()
+    }
+
+    // 自动开启开关
+    func setAutoStart(_ on: Bool) {
+        autoStartEnabled = on
+        UserDefaults.standard.set(on, forKey: "ailive_lite_pip_auto")
+    }
+
+    // MARK: - 内容更新（播报文字变化时重绘）
+    private func updateContent(text: String, type: String) {
+        lastText = text
+        lastType = type
+        if isPiPActive {
+            renderFrame()
+        }
+    }
+
+    // MARK: - 渲染
+    private func renderInitialFrame() {
+        // 先画一帧「等待播报」占位，让 PiP 有内容可显示
+        lastText = "AI播放端 · 待命中"
+        lastType = ""
+        renderFrame()
+    }
+
+    private func renderFrame() {
+        guard let layer = displayLayer else { return }
+
+        // 内容没变就不重绘（省电）
+        let hash = "\(lastType)|\(lastText)|\(isPiPActive)".hashValue
+        guard hash != lastRenderedHash else { return }
+        lastRenderedHash = hash
+
+        let image = drawTextImage(text: lastText, type: lastType)
+        guard let cgImage = image.cgImage else { return }
+
+        let attrs = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(renderWidth * 2),   // 2x 渲染更清晰
+            kCVPixelBufferHeightKey as String: Int(renderHeight * 2),
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ] as [String: Any]
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault,
+                            Int(renderWidth * 2), Int(renderHeight * 2),
+                            kCVPixelFormatType_32BGRA,
+                            attrs as CFDictionary,
+                            &pixelBuffer)
+        guard let pb = pixelBuffer else { return }
+
+        CVPixelBufferLockBaseAddress(pb, [])
+        if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb),
+                               width: Int(renderWidth * 2),
+                               height: Int(renderHeight * 2),
+                               bitsPerComponent: 8,
+                               bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
+                               space: CGColorSpaceCreateDeviceRGB(),
+                               bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: renderWidth * 2, height: renderHeight * 2))
+        }
+        CVPixelBufferUnlockBaseAddress(pb, [])
+
+        var timing = CMSampleTimingInfo()
+        timing.presentationTimeStamp = CMTime(seconds: CACurrentMediaTime(), preferredTimescale: 600)
+        timing.duration = CMTime(value: 1, timescale: 30)
+        var formatDesc: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
+                                                     imageBuffer: pb,
+                                                     formatDescriptionOut: &formatDesc)
+        guard let fd = formatDesc else { return }
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
+                                                 imageBuffer: pb,
+                                                 formatDescription: fd,
+                                                 sampleTiming: &timing,
+                                                 sampleBufferOut: &sampleBuffer)
+        if let sb = sampleBuffer {
+            layer.enqueue(sb)
+        }
+    }
+
+    // 把文字画成 UIImage（黑色半透明底 + 大字）
+    private func drawTextImage(text: String, type: String) -> UIImage {
+        let w = renderWidth
+        let h = renderHeight
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 2
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format)
+
+        return renderer.image { ctx in
+            // 背景
+            UIColor(white: 0, alpha: 0.75).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+
+            // 顶部类型标签 + 时间
+            let typeStr = type.isEmpty ? "AI播放端" : typeLabel(type)
+            let timeStr = timeNow()
+            let para = NSMutableParagraphStyle()
+            para.alignment = .left
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 14),
+                .foregroundColor: UIColor.systemYellow
+            ]
+            typeStr.draw(at: CGPoint(x: 16, y: 12), withAttributes: attrs)
+
+            let timeAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 12),
+                .foregroundColor: UIColor.systemGray2
+            ]
+            let timeSize = (timeStr as NSString).size(withAttributes: timeAttrs)
+            timeStr.draw(at: CGPoint(x: w - timeSize.width - 16, y: 14), withAttributes: timeAttrs)
+
+            // 中间大字：播报文字（自动换行，最多3行）
+            let textAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 22),
+                .foregroundColor: UIColor.white
+            ]
+            let textRect = CGRect(x: 16, y: 46, width: w - 32, height: h - 60)
+            (text as NSString).draw(with: textRect,
+                                    options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                    attributes: textAttrs,
+                                    context: nil)
+        }
+    }
+
+    private func typeLabel(_ type: String) -> String {
+        switch type {
+        case "danmaku": return "💬 弹幕"
+        case "warmup": return "📢 暖场"
+        case "time": return "🕐 报时"
+        case "order": return "💰 下单"
+        case "follow": return "❤️ 关注"
+        case "gift": return "🎁 礼物"
+        default: return "📢 播报"
+        }
+    }
+
+    private func timeNow() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss"
+        return fmt.string(from: Date())
+    }
+
+    // MARK: - 系统状态观察（前后台切换）
+    private func addObservers() {
+        let nc = NotificationCenter.default
+        observers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            // 进后台：如果开启了自动 PiP 且还没启动，就启动（延迟一下更稳，避免被系统忽略）
+            if self.autoStartEnabled && self.pipController?.isPictureInPictureActive == false {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    guard self.autoStartEnabled, self.pipController?.isPictureInPictureActive == false else { return }
+                    self.startPiP()
+                }
+            }
+        })
+        observers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            // 回前台：不强制关，让用户自己决定（PiP 可以继续悬浮）
+        })
+    }
+}
+
+// MARK: - PiP 控制器代理
+extension PiPOverlayManager: AVPictureInPictureControllerDelegate {
+    func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        isPiPActive = true
+        print("[PiP] 已启动")
+        // 启动渲染定时器：保持画面刷新（文字变化也会主动渲染）
+        if renderTimer == nil {
+            let link = CADisplayLink(target: self, selector: #selector(tick))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 1, maximum: 5)
+            link.add(to: .main, forMode: .common)
+            renderTimer = link
+        }
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        isPiPActive = false
+        renderTimer?.invalidate()
+        renderTimer = nil
+        print("[PiP] 已停止")
+    }
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    failedToStartPictureInPictureWithError error: Error) {
+        print("[PiP] 启动失败: \(error)")
+    }
+}
+
+// MARK: - 播放代理（渲染帧源）
+extension PiPOverlayManager: AVPictureInPictureSampleBufferPlaybackDelegate {
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    setPlaying playing: Bool) {}
+
+    func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
+        return CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 30))
+    }
+
+    func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
+        return false
+    }
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    skipByInterval skipInterval: CMTime,
+                                    completion completionHandler: @escaping () -> Void) {
+        completionHandler()
+    }
+
+    @objc private func tick() {
+        renderFrame()
+    }
+}
