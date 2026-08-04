@@ -16,10 +16,13 @@ final class PiPOverlayManager: NSObject, ObservableObject {
     @Published var isPiPActive = false       // 当前 PiP 是否在显示
     @Published var isPiPAvailable = false    // 当前设备是否支持 PiP（模拟器不支持）
     @Published var autoStartEnabled = true   // 后台自动开启 PiP
+    @Published var canStartNow = false       // 当前是否可启动（诊断+UI）
 
     private var pipController: AVPictureInPictureController?
     private var displayLayer: AVSampleBufferDisplayLayer?
     private var renderTimer: CADisplayLink?
+    private var statusTimer: Timer?          // 每秒刷新可启动状态
+    private var hasRenderedFirstFrame = false
     private var lastText = ""
     private var lastType = ""
     private var lastRenderedHash = 0
@@ -36,6 +39,12 @@ final class PiPOverlayManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         autoStartEnabled = UserDefaults.standard.object(forKey: "ailive_lite_pip_auto") as? Bool ?? true
+    }
+
+    deinit {
+        statusTimer?.invalidate()
+        renderTimer?.invalidate()
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     // MARK: - 生命周期：App 启动后调用一次
@@ -59,6 +68,8 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         )
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
+        // 关键：切后台时系统自动启动 PiP（官方机制，比手动延迟调用稳）
+        controller.canStartPictureInPictureAutomaticallyWhenEnteringBackground = true
         pipController = controller
         isPiPAvailable = true
 
@@ -72,19 +83,42 @@ final class PiPOverlayManager: NSObject, ObservableObject {
 
         addObservers()
         renderInitialFrame()
+        refreshCanStart()
+
+        // 每秒刷新“可启动”状态（诊断用 + 按钮可用性）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.refreshCanStart()
+        }
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.refreshCanStart()
+        }
 
         print("[PiP] 初始化完成，自动开启: \(autoStartEnabled)")
     }
 
+    /// 刷新当前是否可启动（供 UI 显示 + 诊断）
+    private func refreshCanStart() {
+        let can = pipController?.isPictureInPicturePossible ?? false
+        if canStartNow != can {
+            canStartNow = can
+            print("[PiP] 可启动状态: \(can) (active=\(pipController?.isPictureInPictureActive ?? false))")
+        }
+    }
+
     // MARK: - 公开控制
     func startPiP() {
-        guard let pip = pipController, pip.isPictureInPicturePossible else {
-            print("[PiP] 暂不可启动（未连接/无内容/不支持）")
+        guard let pip = pipController else {
+            print("[PiP] 未初始化，无法启动")
+            return
+        }
+        print("[PiP] startPiP: possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive)")
+        guard pip.isPictureInPicturePossible else {
+            print("[PiP] 暂不可启动（无内容/不支持）")
             return
         }
         if !pip.isPictureInPictureActive {
             pip.startPictureInPicture()
-            print("[PiP] 启动画中画")
+            print("[PiP] 已请求启动画中画")
         }
     }
 
@@ -124,7 +158,10 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         lastRenderedHash = hash
 
         let image = drawTextImage(text: lastText, type: lastType)
-        guard let cgImage = image.cgImage else { return }
+        guard let cgImage = image.cgImage else {
+            print("[PiP] 渲染失败: 无法获取 cgImage")
+            return
+        }
 
         let attrs = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -139,7 +176,10 @@ final class PiPOverlayManager: NSObject, ObservableObject {
                             kCVPixelFormatType_32BGRA,
                             attrs as CFDictionary,
                             &pixelBuffer)
-        guard let pb = pixelBuffer else { return }
+        guard let pb = pixelBuffer else {
+            print("[PiP] 渲染失败: CVPixelBufferCreate 返回 nil")
+            return
+        }
 
         CVPixelBufferLockBaseAddress(pb, [])
         if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb),
@@ -160,7 +200,10 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
                                                      imageBuffer: pb,
                                                      formatDescriptionOut: &formatDesc)
-        guard let fd = formatDesc else { return }
+        guard let fd = formatDesc else {
+            print("[PiP] 渲染失败: 格式描述创建失败")
+            return
+        }
         var sampleBuffer: CMSampleBuffer?
         CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
                                                  imageBuffer: pb,
@@ -169,6 +212,12 @@ final class PiPOverlayManager: NSObject, ObservableObject {
                                                  sampleBufferOut: &sampleBuffer)
         if let sb = sampleBuffer {
             layer.enqueue(sb)
+            if !hasRenderedFirstFrame {
+                hasRenderedFirstFrame = true
+                print("[PiP] ✅ 首帧已入队，PiP 应可启动")
+            }
+        } else {
+            print("[PiP] 渲染失败: sampleBuffer 创建失败")
         }
     }
 

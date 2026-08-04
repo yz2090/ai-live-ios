@@ -54,10 +54,18 @@ struct ContentView: View {
                                 Text("此设备不支持画中画")
                                     .font(.caption)
                                     .foregroundColor(.orange)
-                            } else {
-                                Text(pipManager.isPiPActive ? "悬浮窗显示中" : "悬浮窗未开启")
+                            } else if pipManager.isPiPActive {
+                                Text("悬浮窗显示中")
                                     .font(.caption)
-                                    .foregroundColor(pipManager.isPiPActive ? .green : .secondary)
+                                    .foregroundColor(.green)
+                            } else if !pipManager.canStartNow {
+                                Text("暂不可开启（等待服务器连接/系统准备）")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            } else {
+                                Text("可开启悬浮窗")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
                             Spacer()
                             Button(pipManager.isPiPActive ? "关闭悬浮窗" : "开启悬浮窗") {
@@ -69,7 +77,7 @@ struct ContentView: View {
                             }
                             .buttonStyle(.bordered)
                             .tint(.blue)
-                            .disabled(!pipManager.isPiPAvailable)
+                            .disabled(!pipManager.isPiPAvailable || (!pipManager.isPiPActive && !pipManager.canStartNow))
                         }
 
                         Text("开启后，切到其它App时播报内容会显示在系统悬浮窗里（可拖到屏幕四角吸附）。")
