@@ -112,8 +112,19 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             return
         }
         print("[PiP] startPiP: possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive) 首帧=\(hasRenderedFirstFrame)")
+
+        // PiP 启动前：强制设置音频会话为 .playback（不带 mixWithOthers，否则 PiP 会失败）
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback)
+            try session.setActive(true)
+            print("[PiP] 音频会话已重置: category=\(session.category.rawValue) options=\(session.categoryOptions.rawValue)")
+        } catch {
+            print("[PiP] 音频会话设置失败: \(error)")
+        }
+
         guard pip.isPictureInPicturePossible else {
-            lastPiPError = hasRenderedFirstFrame ? "系统暂不允许（前台/音频状态问题）" : "渲染层还没有画面"
+            lastPiPError = hasRenderedFirstFrame ? "系统暂不允许（音频/前台状态问题）" : "渲染层还没有画面"
             print("[PiP] 暂不可启动")
             return
         }

@@ -52,10 +52,8 @@ class AudioPlayerService: NSObject, ObservableObject {
 
     private func setupAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(
-                .playback,
-                options: [.mixWithOthers]
-            )
+            // 不能用 .mixWithOthers：会导致画中画(PiP)启动失败
+            try AVAudioSession.sharedInstance().setCategory(.playback)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("[AiLiveLite] 音频会话初始化失败: \(error)")

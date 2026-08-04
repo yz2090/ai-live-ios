@@ -28,9 +28,9 @@ struct AiLiveLiteApp: App {
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // 配置后台音频会话
+        // 配置后台音频会话（注意：不能用 .mixWithOthers，会导致 PiP 启动失败）
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setCategory(.playback)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("[AiLiveLite] 后台音频会话配置失败: \(error)")
