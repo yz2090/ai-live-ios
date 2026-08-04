@@ -17,6 +17,7 @@ final class PiPOverlayManager: NSObject, ObservableObject {
     @Published var isPiPAvailable = false    // 当前设备是否支持 PiP（模拟器不支持）
     @Published var autoStartEnabled = true   // 后台自动开启 PiP
     @Published var canStartNow = false       // 当前是否可启动（诊断+UI）
+    @Published var lastPiPError: String? = nil  // 最近一次 PiP 错误（显示到UI）
 
     private var pipController: AVPictureInPictureController?
     private var displayLayer: AVSampleBufferDisplayLayer?
@@ -106,15 +107,18 @@ final class PiPOverlayManager: NSObject, ObservableObject {
     // MARK: - 公开控制
     func startPiP() {
         guard let pip = pipController else {
+            lastPiPError = "未初始化"
             print("[PiP] 未初始化，无法启动")
             return
         }
-        print("[PiP] startPiP: possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive)")
+        print("[PiP] startPiP: possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive) 首帧=\(hasRenderedFirstFrame)")
         guard pip.isPictureInPicturePossible else {
-            print("[PiP] 暂不可启动（无内容/不支持）")
+            lastPiPError = hasRenderedFirstFrame ? "系统暂不允许（前台/音频状态问题）" : "渲染层还没有画面"
+            print("[PiP] 暂不可启动")
             return
         }
         if !pip.isPictureInPictureActive {
+            lastPiPError = nil
             pip.startPictureInPicture()
             print("[PiP] 已请求启动画中画")
         }
@@ -153,7 +157,6 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         // 内容没变就不重绘（省电）
         let hash = "\(lastType)|\(lastText)|\(isPiPActive)".hashValue
         guard hash != lastRenderedHash else { return }
-        lastRenderedHash = hash
 
         let image = drawTextImage(text: lastText, type: lastType)
         guard let cgImage = image.cgImage else {
@@ -161,12 +164,14 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             return
         }
 
+        // 关键：必须带 IOSurface 支持，真机上 AVSampleBufferDisplayLayer 才能显示
         let attrs = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: Int(renderWidth * 2),   // 2x 渲染更清晰
             kCVPixelBufferHeightKey as String: Int(renderHeight * 2),
             kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]       // ← IOSurface backing
         ] as [String: Any]
         var pixelBuffer: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault,
@@ -210,6 +215,7 @@ final class PiPOverlayManager: NSObject, ObservableObject {
                                                  sampleBufferOut: &sampleBuffer)
         if let sb = sampleBuffer {
             layer.enqueue(sb)
+            lastRenderedHash = hash   // 只在成功入队后记录，失败会重试
             if !hasRenderedFirstFrame {
                 hasRenderedFirstFrame = true
                 print("[PiP] ✅ 首帧已入队，PiP 应可启动")
@@ -326,6 +332,7 @@ extension PiPOverlayManager: AVPictureInPictureControllerDelegate {
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {
+        lastPiPError = "启动失败: \(error.localizedDescription)"
         print("[PiP] 启动失败: \(error)")
     }
 }

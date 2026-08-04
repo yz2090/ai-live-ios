@@ -83,6 +83,12 @@ struct ContentView: View {
                         Text("开启后，切到其它App时播报内容会显示在系统悬浮窗里（可拖到屏幕四角吸附）。")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+
+                        if let err = pipManager.lastPiPError {
+                            Text("⚠️ \(err)")
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                        }
                     }
                     .padding(.vertical, 4)
                 } header: {
