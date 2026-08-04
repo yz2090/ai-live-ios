@@ -1,0 +1,40 @@
+name: Build Tweak
+
+on:
+  push:
+    paths:
+      - 'tweak/**'
+  workflow_dispatch:
+
+jobs:
+  build-tweak:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Theos
+        run: |
+          export THEOS=~/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git $THEOS
+          # 下载 iOS SDK（Theos 需要）
+          cd $THEOS
+          curl -sLO https://github.com/xybp888/iOS-SDKs/releases/download/15.0/iPhoneOS15.0.sdk.tar.xz
+          mkdir -p sdks
+          tar -xJf iPhoneOS15.0.sdk.tar.xz -C sdks/
+          ls sdks/
+
+      - name: Build Tweak
+        run: |
+          export THEOS=~/theos
+          cd tweak/violation-alert
+          make clean
+          make package
+          ls -la
+          find . -name "*.deb" | head -5
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViolationAlert-deb
+          path: tweak/violation-alert/*.deb
