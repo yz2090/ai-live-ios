@@ -21,14 +21,16 @@ final class PiPOverlayManager: NSObject, ObservableObject {
 
     private var pipController: AVPictureInPictureController?
     private var displayLayer: AVSampleBufferDisplayLayer?
+    private var pipContainerView: UIView?    // 隐藏容器：承载 displayLayer（PiP 必需挂在视图树）
     private var renderTimer: CADisplayLink?
     private var statusTimer: Timer?          // 每秒刷新可启动状态
     private var hasRenderedFirstFrame = false
     private var lastText = ""
     private var lastType = ""
     private var lastRenderedHash = 0
+    private var cachedCGImage: CGImage?
+    private var cachedPixelBuffer: CVPixelBuffer?
     private var observers: [NSObjectProtocol] = []
-    private var pendingStart = false
 
     // 渲染尺寸（16:9 画中画窗口宽高比），pt 单位
     private let renderWidth: CGFloat = 360
@@ -56,12 +58,23 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         }
         guard pipController == nil else { return }
 
-        // 渲染层
+        // 渲染层：必须挂到视图层级（隐藏容器），PiP 系统才能消费帧
         let layer = AVSampleBufferDisplayLayer()
         layer.videoGravity = .resizeAspectFill
         layer.backgroundColor = UIColor.black.cgColor
         layer.frame = CGRect(x: 0, y: 0, width: renderWidth, height: renderHeight)
+
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: renderWidth, height: renderHeight))
+        container.isHidden = true
+        container.layer.addSublayer(layer)
+        // 挂到当前 keyWindow（隐藏容器，用户看不到）
+        if let window = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first {
+            window.addSubview(container)
+        }
+        pipContainerView = container
         displayLayer = layer
+        print("[PiP] 渲染层已挂载到窗口层级")
 
         let source = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: layer,
@@ -81,13 +94,13 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             }
 
         addObservers()
-        renderInitialFrame()
-        refreshCanStart()
 
-        // 每秒刷新“可启动”状态（诊断用 + 按钮可用性）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.refreshCanStart()
-        }
+        // 持续渲染（2-5fps）：PiP 启动前后都需要有视频流
+        lastText = "AI播放端 · 待命中"
+        startRenderTimer()
+        renderFrame()
+
+        refreshCanStart()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refreshCanStart()
         }
@@ -102,6 +115,22 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             canStartNow = can
             print("[PiP] 可启动状态: \(can) (active=\(pipController?.isPictureInPictureActive ?? false))")
         }
+    }
+
+    // MARK: - 持续渲染
+    private func startRenderTimer() {
+        guard renderTimer == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        if #available(iOS 15.0, *) {
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 1, maximum: 5)
+        }
+        link.add(to: .main, forMode: .common)
+        renderTimer = link
+        print("[PiP] 持续渲染定时器已启动 (2-5fps)")
+    }
+
+    @objc private func tick() {
+        renderFrame()
     }
 
     // MARK: - 公开控制
@@ -122,6 +151,9 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         } catch {
             print("[PiP] 音频会话设置失败: \(error)")
         }
+
+        // 启动前强制渲染一帧，确保 layer 有数据
+        renderFrame()
 
         guard pip.isPictureInPicturePossible else {
             lastPiPError = hasRenderedFirstFrame ? "系统暂不允许（音频/前台状态问题）" : "渲染层还没有画面"
@@ -149,67 +181,42 @@ final class PiPOverlayManager: NSObject, ObservableObject {
     private func updateContent(text: String, type: String) {
         lastText = text
         lastType = type
-        if isPiPActive {
-            renderFrame()
-        }
+        renderFrame()   // 立即重绘，不等下一 tick
     }
 
     // MARK: - 渲染
-    private func renderInitialFrame() {
-        // 先画一帧「等待播报」占位，让 PiP 有内容可显示
-        lastText = "AI播放端 · 待命中"
-        lastType = ""
-        renderFrame()
-    }
-
     private func renderFrame() {
         guard let layer = displayLayer else { return }
 
-        // 内容没变就不重绘（省电）
-        let hash = "\(lastType)|\(lastText)|\(isPiPActive)".hashValue
-        guard hash != lastRenderedHash else { return }
+        // 内容变了 → 重新绘制图片
+        let hash = "\(lastType)|\(lastText)".hashValue
+        if hash != lastRenderedHash {
+            let image = drawTextImage(text: lastText, type: lastType)
+            if let cg = image.cgImage {
+                cachedCGImage = cg
+                cachedPixelBuffer = nil   // 内容变了，缓冲作废，下次重建
+            }
+            lastRenderedHash = hash
+        }
 
-        let image = drawTextImage(text: lastText, type: lastType)
-        guard let cgImage = image.cgImage else {
-            print("[PiP] 渲染失败: 无法获取 cgImage")
+        guard let cgImage = cachedCGImage else {
+            print("[PiP] 渲染失败: 无图片数据")
             return
         }
 
-        // 关键：必须带 IOSurface 支持，真机上 AVSampleBufferDisplayLayer 才能显示
-        let attrs = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: Int(renderWidth * 2),   // 2x 渲染更清晰
-            kCVPixelBufferHeightKey as String: Int(renderHeight * 2),
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:]       // ← IOSurface backing
-        ] as [String: Any]
-        var pixelBuffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault,
-                            Int(renderWidth * 2), Int(renderHeight * 2),
-                            kCVPixelFormatType_32BGRA,
-                            attrs as CFDictionary,
-                            &pixelBuffer)
-        guard let pb = pixelBuffer else {
+        // 复用或创建 pixelBuffer
+        if cachedPixelBuffer == nil {
+            cachedPixelBuffer = makePixelBuffer(from: cgImage)
+        }
+        guard let pb = cachedPixelBuffer else {
             print("[PiP] 渲染失败: CVPixelBufferCreate 返回 nil")
             return
         }
 
-        CVPixelBufferLockBaseAddress(pb, [])
-        if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb),
-                               width: Int(renderWidth * 2),
-                               height: Int(renderHeight * 2),
-                               bitsPerComponent: 8,
-                               bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
-                               space: CGColorSpaceCreateDeviceRGB(),
-                               bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
-            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: renderWidth * 2, height: renderHeight * 2))
-        }
-        CVPixelBufferUnlockBaseAddress(pb, [])
-
+        // 每帧新建 sampleBuffer（PTS 单调递增），入队给 PiP
         var timing = CMSampleTimingInfo()
         timing.presentationTimeStamp = CMTime(seconds: CACurrentMediaTime(), preferredTimescale: 600)
-        timing.duration = CMTime(value: 1, timescale: 30)
+        timing.duration = CMTime(value: 1, timescale: 60)
         var formatDesc: CMVideoFormatDescription?
         CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
                                                      imageBuffer: pb,
@@ -226,7 +233,6 @@ final class PiPOverlayManager: NSObject, ObservableObject {
                                                  sampleBufferOut: &sampleBuffer)
         if let sb = sampleBuffer {
             layer.enqueue(sb)
-            lastRenderedHash = hash   // 只在成功入队后记录，失败会重试
             if !hasRenderedFirstFrame {
                 hasRenderedFirstFrame = true
                 print("[PiP] ✅ 首帧已入队，PiP 应可启动")
@@ -234,6 +240,38 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         } else {
             print("[PiP] 渲染失败: sampleBuffer 创建失败")
         }
+    }
+
+    /// 创建 IOSurface-backed 的 CVPixelBuffer（真机 PiP 必需）
+    private func makePixelBuffer(from cgImage: CGImage) -> CVPixelBuffer? {
+        let attrs = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(renderWidth * 2),
+            kCVPixelBufferHeightKey as String: Int(renderHeight * 2),
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ] as [String: Any]
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault,
+                            Int(renderWidth * 2), Int(renderHeight * 2),
+                            kCVPixelFormatType_32BGRA,
+                            attrs as CFDictionary,
+                            &pixelBuffer)
+        guard let pb = pixelBuffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(pb, [])
+        if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb),
+                               width: Int(renderWidth * 2),
+                               height: Int(renderHeight * 2),
+                               bitsPerComponent: 8,
+                               bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
+                               space: CGColorSpaceCreateDeviceRGB(),
+                               bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: renderWidth * 2, height: renderHeight * 2))
+        }
+        CVPixelBufferUnlockBaseAddress(pb, [])
+        return pb
     }
 
     // 把文字画成 UIImage（黑色半透明底 + 大字）
@@ -252,8 +290,6 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             // 顶部类型标签 + 时间
             let typeStr = type.isEmpty ? "AI播放端" : typeLabel(type)
             let timeStr = timeNow()
-            let para = NSMutableParagraphStyle()
-            para.alignment = .left
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.boldSystemFont(ofSize: 14),
                 .foregroundColor: UIColor.systemYellow
@@ -324,20 +360,12 @@ final class PiPOverlayManager: NSObject, ObservableObject {
 extension PiPOverlayManager: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         isPiPActive = true
+        lastPiPError = nil
         print("[PiP] 已启动")
-        // 启动渲染定时器：保持画面刷新（文字变化也会主动渲染）
-        if renderTimer == nil {
-            let link = CADisplayLink(target: self, selector: #selector(tick))
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 1, maximum: 5)
-            link.add(to: .main, forMode: .common)
-            renderTimer = link
-        }
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         isPiPActive = false
-        renderTimer?.invalidate()
-        renderTimer = nil
         print("[PiP] 已停止")
     }
 
@@ -354,7 +382,7 @@ extension PiPOverlayManager: AVPictureInPictureSampleBufferPlaybackDelegate {
                                     setPlaying playing: Bool) {}
 
     func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
-        return CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 30))
+        return CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 60))
     }
 
     func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
@@ -368,9 +396,5 @@ extension PiPOverlayManager: AVPictureInPictureSampleBufferPlaybackDelegate {
                                     skipByInterval skipInterval: CMTime,
                                     completion completionHandler: @escaping () -> Void) {
         completionHandler()
-    }
-
-    @objc private func tick() {
-        renderFrame()
     }
 }
