@@ -142,10 +142,10 @@ final class PiPOverlayManager: NSObject, ObservableObject {
         }
         print("[PiP] startPiP: possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive) 首帧=\(hasRenderedFirstFrame)")
 
-        // PiP 启动前：强制设置音频会话为 .playback（不带 mixWithOthers，否则 PiP 会失败）
+        // PiP 启动前：确保音频会话处于正确状态（.playback + .mixWithOthers，保持与抖音共存）
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback)
+            try session.setCategory(.playback, options: [.mixWithOthers])
             try session.setActive(true)
             print("[PiP] 音频会话已重置: category=\(session.category.rawValue) options=\(session.categoryOptions.rawValue)")
         } catch {

@@ -43,6 +43,7 @@ class AudioPlayerService: NSObject, ObservableObject {
         musicVolume = savedMusic
         super.init()
         setupAudioSession()
+        setupInterruptionObserver()
         loadMusicFromDocuments()
         // 有音乐文件则自动开始播放（后台保活 + 无需手动开开关）
         if !musicFiles.isEmpty {
@@ -50,10 +51,56 @@ class AudioPlayerService: NSObject, ObservableObject {
         }
     }
 
+    /// 监听音频打断（来电/其它App抢音频）：结束后自动恢复
+    private func setupInterruptionObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleInterruption(_ note: Notification) {
+        guard let info = note.userInfo,
+              let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            // 被打断：暂停播放（可选）
+            break
+        case .ended:
+            // 打断结束：恢复音频会话 + 继续播放
+            let options = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self = self else { return }
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true)
+                } catch {
+                    print("[AiLiveLite] 恢复音频会话失败: \(error)")
+                }
+                if shouldResume || !self.audioQueue.isEmpty {
+                    // 队列里还有 TTS 就继续播
+                    if !self.isPlayingQueue {
+                        self.playNext()
+                    }
+                }
+                // 背景音乐被停则恢复
+                if !self.isMusicPlaying && !self.musicFiles.isEmpty {
+                    self.startMusic()
+                }
+            }
+            print("[AiLiveLite] 音频打断结束，恢复播放")
+        @unknown default:
+            break
+        }
+    }
+
     private func setupAudioSession() {
         do {
-            // 不能用 .mixWithOthers：会导致画中画(PiP)启动失败
-            try AVAudioSession.sharedInstance().setCategory(.playback)
+            // .playback + .mixWithOthers：允许与抖音等其它App声音共存（PiP是纯视频渲染，不依赖独占音频）
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("[AiLiveLite] 音频会话初始化失败: \(error)")
