@@ -2,35 +2,18 @@
 #import <Foundation/Foundation.h>
 
 // ============================================================
-// 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.2
+// 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.3
 // 功能：Hook UIAlertController，检测到违规/人脸识别等弹窗
 //       → POST 到服务器 /api/violation_report → Bark 推送
-// 配置：/var/mobile/Library/Preferences/com.ailive.violationalert.plist
-// 日志：/var/mobile/violationalert.log（用「文件」App 即可查看）
+// 配置（可选）：/var/mobile/Library/Preferences/com.ailive.violationalert.plist
+//   { device_id, server, test_mode, keywords }
+// 零配置默认：无 plist 时自动开启测试模式（弹测试窗验证链路）
+// 日志：NSLog 系统日志（爱思助手/终端看）
 // ============================================================
 
 static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.violationalert.plist";
-static NSString *kLogPath = @"/var/mobile/violationalert.log";
 static BOOL gTestMode = NO;
 static BOOL gTestAlertShown = NO;
-
-// 写日志（追加）
-static void LogToFile(NSString *msg) {
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
-    if (!fh) {
-        [[NSFileManager defaultManager] createFileAtPath:kLogPath contents:nil attributes:nil];
-        fh = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
-    }
-    if (fh) {
-        NSString *line = [NSString stringWithFormat:@"%@ %@\n",
-            [NSDateFormatter localizedStringFromDate:[NSDate date] dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterMediumStyle],
-            msg];
-        [fh seekToEndOfFile];
-        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-        [fh closeFile];
-    }
-    NSLog(@"[ViolationAlert] %@", msg);
-}
 
 @interface ViolationAlertHelper : NSObject
 + (instancetype)shared;
@@ -50,7 +33,7 @@ static void LogToFile(NSString *msg) {
     return inst;
 }
 
-// 读取配置
+// 读取配置（无 plist 返回空字典）
 - (NSDictionary *)loadConfig {
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     if (!cfg) cfg = @{};
@@ -85,7 +68,7 @@ static void LogToFile(NSString *msg) {
     NSString *deviceId = cfg[@"device_id"] ?: @"";
     NSString *server = cfg[@"server"] ?: @"http://59.110.152.66:18766";
     if (!deviceId.length) {
-        LogToFile(@"⚠️ 未配置 device_id，跳过上报（请检查 plist）");
+        NSLog(@"[ViolationAlert] ⚠️ 未配置 device_id，跳过上报");
         return;
     }
     NSString *urlStr = [NSString stringWithFormat:@"%@/api/violation_report", server];
@@ -101,17 +84,17 @@ static void LogToFile(NSString *msg) {
     NSError *err = nil;
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&err];
     if (err) {
-        LogToFile([NSString stringWithFormat:@"⚠️ JSON序列化失败: %@", err]);
+        NSLog(@"[ViolationAlert] ⚠️ JSON序列化失败: %@", err);
         return;
     }
     req.HTTPBody = jsonData;
     NSURLSession *session = [NSURLSession sharedSession];
     NSURLSessionDataTask *task = [session dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
         if (error) {
-            LogToFile([NSString stringWithFormat:@"❌ 上报失败: %@", error.localizedDescription]);
+            NSLog(@"[ViolationAlert] ❌ 上报失败: %@", error.localizedDescription);
         } else {
             NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)resp;
-            LogToFile([NSString stringWithFormat:@"✅ 上报成功 HTTP %ld: %@", (long)httpResp.statusCode, text]);
+            NSLog(@"[ViolationAlert] ✅ 上报成功 HTTP %ld: %@", (long)httpResp.statusCode, text);
         }
     }];
     [task resume];
@@ -126,14 +109,14 @@ static void LogToFile(NSString *msg) {
     if (!full.length) return;
 
     if (gTestMode) {
-        LogToFile([NSString stringWithFormat:@"[测试模式] 捕获弹窗: %@", full]);
+        NSLog(@"[ViolationAlert] [测试模式] 捕获弹窗: %@", full);
         NSString *appName = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
         [self reportToServer:full app:appName];
         return;
     }
 
     if ([self matchKeyword:full]) {
-        LogToFile([NSString stringWithFormat:@"🚨 检测到违规弹窗: %@", full]);
+        NSLog(@"[ViolationAlert] 🚨 检测到违规弹窗: %@", full);
         NSString *appName = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
         [self reportToServer:full app:appName];
     }
@@ -151,6 +134,10 @@ static void LogToFile(NSString *msg) {
             if (keyWindow) break;
         }
     }
+    if (!keyWindow) {
+        // 兜底：老 API
+        keyWindow = [UIApplication sharedApplication].keyWindow;
+    }
     UIViewController *top = keyWindow.rootViewController;
     while (top.presentedViewController) {
         top = top.presentedViewController;
@@ -165,7 +152,8 @@ static void LogToFile(NSString *msg) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = [self topViewController];
         if (!top) {
-            LogToFile(@"❌ 测试弹窗失败：找不到顶层控制器");
+            NSLog(@"[ViolationAlert] ❌ 测试弹窗失败：找不到顶层控制器");
+            gTestAlertShown = NO; // 允许重试
             return;
         }
         UIAlertController *testAlert = [UIAlertController alertControllerWithTitle:@"测试弹窗"
@@ -173,7 +161,7 @@ static void LogToFile(NSString *msg) {
                                                                    preferredStyle:UIAlertControllerStyleAlert];
         [testAlert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:testAlert animated:YES completion:nil];
-        LogToFile(@"✅ 已弹出测试弹窗");
+        NSLog(@"[ViolationAlert] ✅ 已弹出测试弹窗");
     });
 }
 
@@ -191,23 +179,27 @@ static void LogToFile(NSString *msg) {
 %end
 
 %ctor {
-    LogToFile(@"===== ViolationAlert v0.0.2 已加载 =====");
+    NSLog(@"[ViolationAlert] ===== v0.0.3 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     gTestMode = [cfg[@"test_mode"] boolValue];
+
+    // 零配置兜底：没有 plist 或没有 test_mode 字段时，自动开测试模式
+    if (!cfg || ![cfg objectForKey:@"test_mode"]) {
+        gTestMode = YES;
+        NSLog(@"[ViolationAlert] 🔧 无配置或未设置test_mode → 自动进入测试模式");
+    }
+
     NSString *deviceId = cfg[@"device_id"] ?: @"";
-    LogToFile([NSString stringWithFormat:@"配置: test_mode=%d device_id=%@",
-        gTestMode, deviceId.length ? deviceId : @"(未设置!)"]);
+    NSLog(@"[ViolationAlert] 配置: test_mode=%d device_id=%@",
+        gTestMode, deviceId.length ? deviceId : @"(未设置)");
 
     if (gTestMode) {
-        // 监听 App 激活后再弹（更可靠），多次尝试
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [[ViolationAlertHelper shared] showTestAlert];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!gTestAlertShown) [[ViolationAlertHelper shared] showTestAlert];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!gTestAlertShown) [[ViolationAlertHelper shared] showTestAlert];
-        });
+        // 多次尝试弹测试窗（抖音界面就绪需要时间）
+        for (int i = 0; i < 5; i++) {
+            double delay = 3.0 + i * 5.0;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [[ViolationAlertHelper shared] showTestAlert];
+            });
+        }
     }
 }

@@ -1,7 +1,7 @@
 # 违规弹窗检测 Tweak（Dopamine 越狱插件）
 # 编译：GitHub Actions 云编译（macos runner + Theos）
 
-ARCHS = arm64
+ARCHS = arm64 arm64e
 TARGET = iphone:clang:latest:15.0
 THEOS_PACKAGE_SCHEME = rootless
 include $(THEOS)/makefiles/common.mk
