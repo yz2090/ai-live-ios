@@ -2,7 +2,7 @@
 # 编译：GitHub Actions 云编译（macos runner + Theos）
 
 ARCHS = arm64
-TARGET = iphone:clang:15.0:15.0
+TARGET = iphone:clang:latest:15.0
 THEOS_PACKAGE_SCHEME = rootless
 include $(THEOS)/makefiles/common.mk
 
