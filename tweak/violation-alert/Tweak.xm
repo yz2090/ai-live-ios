@@ -12,6 +12,8 @@
 // ============================================================
 
 static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.violationalert.plist";
+static NSString *kDefaultDeviceId = @"99c79a";   // 默认测试机设备ID（99c79a = 真机3）
+static NSString *kDefaultServer = @"http://59.110.152.66:18766";
 static BOOL gTestMode = NO;
 static BOOL gTestAlertShown = NO;
 
@@ -65,11 +67,14 @@ static BOOL gTestAlertShown = NO;
 // 上报到服务器
 - (void)reportToServer:(NSString *)text app:(NSString *)app {
     NSDictionary *cfg = [self loadConfig];
-    NSString *deviceId = cfg[@"device_id"] ?: @"";
-    NSString *server = cfg[@"server"] ?: @"http://59.110.152.66:18766";
-    if (!deviceId.length) {
-        NSLog(@"[ViolationAlert] ⚠️ 未配置 device_id，跳过上报");
-        return;
+    // 优先读 plist 配置；未配置时用内置默认值（零配置直接可用）
+    NSString *deviceId = cfg[@"device_id"];
+    if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) {
+        deviceId = kDefaultDeviceId;
+    }
+    NSString *server = cfg[@"server"];
+    if (![server isKindOfClass:[NSString class]] || !server.length) {
+        server = kDefaultServer;
     }
     NSString *urlStr = [NSString stringWithFormat:@"%@/api/violation_report", server];
     NSURL *url = [NSURL URLWithString:urlStr];
@@ -191,9 +196,11 @@ static BOOL gTestAlertShown = NO;
         NSLog(@"[ViolationAlert] 🔧 无配置或未设置test_mode → 自动进入测试模式");
     }
 
-    NSString *deviceId = cfg[@"device_id"] ?: @"";
-    NSLog(@"[ViolationAlert] 配置: test_mode=%d device_id=%@",
-        gTestMode, deviceId.length ? deviceId : @"(未设置)");
+    NSString *deviceId = cfg[@"device_id"];
+    if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) {
+        deviceId = kDefaultDeviceId;
+    }
+    NSLog(@"[ViolationAlert] 配置: test_mode=%d device_id=%@", gTestMode, deviceId);
 
     if (gTestMode) {
         // 多次尝试弹测试窗（抖音界面就绪需要时间）
