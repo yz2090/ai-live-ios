@@ -1,7 +1,7 @@
 Package: com.ailive.violationalert
 Name: ViolationAlert 违规弹窗检测
 Depends: mobilesubstrate (>= 0.9.5000)
-Version: 0.0.4
+Version: 0.0.5
 Architecture: iphoneos-arm64
 Description: 检测抖音违规/人脸识别弹窗并推送Bark通知
 Maintainer: ailive
