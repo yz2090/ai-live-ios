@@ -45,6 +45,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 - (void)enumerateClasses;
 - (void)enumerateMethods;
 - (void)probeMessage:(id)message source:(NSString *)source;
+- (void)handleLiveMessage:(id)message;
 @end
 
 @implementation ViolationAlertHelper
@@ -524,6 +525,109 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     NSLog(@"[ViolationAlert] 📡 消息探针: %@", dumpStr);
 }
 
+// v0.3.0 正式采集：识别消息类型并上报服务器（服务器决定是否播报）
+- (void)handleLiveMessage:(id)message {
+    if (!message) return;
+    NSString *cls = NSStringFromClass([message class]);
+    
+    // 1. 评论消息：HTSLiveChatMessage → content 字段
+    if ([cls isEqualToString:@"HTSLiveChatMessage"]) {
+        NSString *content = nil;
+        @try {
+            if ([message respondsToSelector:@selector(content)]) {
+                content = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(content));
+            }
+        } @catch (NSException *e) {}
+        if (content.length) {
+            [self reportSay:content type:@"danmaku"];
+            NSLog(@"[ViolationAlert] 💬 评论: %@", content);
+        }
+        return;
+    }
+    
+    // 2. 电商消息（下单）：HTSLiveLiveEcomGeneralMessage → data 二进制 base64 上报
+    if ([cls isEqualToString:@"HTSLiveLiveEcomGeneralMessage"]) {
+        NSString *contentType = nil;
+        NSData *data = nil;
+        @try {
+            if ([message respondsToSelector:@selector(contentType)]) {
+                contentType = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(contentType));
+            }
+            if ([message respondsToSelector:@selector(data)]) {
+                data = ((NSData *(*)(id, SEL))objc_msgSend)(message, @selector(data));
+            }
+        } @catch (NSException *e) {}
+        if (data.length) {
+            NSString *b64 = [data base64EncodedStringWithOptions:0];
+            [self reportEcom:contentType ?: @"" dataB64:b64];
+            NSLog(@"[ViolationAlert] 🛒 电商消息: %@ (%lu bytes)", contentType ?: @"", (unsigned long)data.length);
+        }
+        return;
+    }
+    
+    // 3. 进房消息：不处理（用户要求）
+    if ([cls isEqualToString:@"HTSLiveMemberMessage"]) {
+        return;
+    }
+    
+    // 其他消息：暂不处理（后续扩展：RoomStats→在线人数等）
+}
+
+// 上报评论到 /api/say
+- (void)reportSay:(NSString *)text type:(NSString *)type {
+    NSDictionary *cfg = [self loadConfig];
+    NSString *deviceId = cfg[@"device_id"];
+    if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) deviceId = kDefaultDeviceId;
+    NSString *server = cfg[@"server"];
+    if (![server isKindOfClass:[NSString class]] || !server.length) server = kDefaultServer;
+    
+    NSString *urlStr = [NSString stringWithFormat:@"%@/api/say", server];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSDictionary *body = @{
+        @"phone_id": deviceId,
+        @"text": text,
+        @"type": type ?: @"danmaku"
+    };
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+    if (!jsonData) return;
+    req.HTTPBody = jsonData;
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        if (error) NSLog(@"[ViolationAlert] ❌ 上报失败: %@", error.localizedDescription);
+        else NSLog(@"[ViolationAlert] ✅ 上报成功: %@", text);
+    }];
+    [task resume];
+}
+
+// 上报电商消息（data base64 交给服务器解码）
+- (void)reportEcom:(NSString *)contentType dataB64:(NSString *)dataB64 {
+    NSDictionary *cfg = [self loadConfig];
+    NSString *deviceId = cfg[@"device_id"];
+    if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) deviceId = kDefaultDeviceId;
+    NSString *server = cfg[@"server"];
+    if (![server isKindOfClass:[NSString class]] || !server.length) server = kDefaultServer;
+    
+    NSString *urlStr = [NSString stringWithFormat:@"%@/api/say", server];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSDictionary *body = @{
+        @"phone_id": deviceId,
+        @"type": @"ecom_raw",
+        @"content_type": contentType,
+        @"data_b64": dataB64
+    };
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+    if (!jsonData) return;
+    req.HTTPBody = jsonData;
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        if (error) NSLog(@"[ViolationAlert] ❌ 电商上报失败: %@", error.localizedDescription);
+        else NSLog(@"[ViolationAlert] ✅ 电商上报成功: %@", contentType);
+    }];
+    [task resume];
+}
+
 // 辅助：列出类的方法名（实例方法，去重）
 - (NSArray *)methodNamesForClass:(Class)cls {
     NSMutableArray *names = [NSMutableArray array];
@@ -702,25 +806,26 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 
 - (void)dispatchMessage:(id)message {
     %orig;
-    [[ViolationAlertHelper shared] probeMessage:message source:@"dispatchMessage"];
+    // v0.3.0 正式采集：识别消息类型上报服务器
+    [[ViolationAlertHelper shared] handleLiveMessage:message];
 }
 
 - (void)didRecieveMessages:(id)messages {
     %orig;
-    // 可能是数组/包装对象，逐个探
+    // 批量消息，逐个采集
     if ([messages isKindOfClass:[NSArray class]]) {
         for (id m in (NSArray *)messages) {
-            [[ViolationAlertHelper shared] probeMessage:m source:@"didRecieveMessages"];
+            [[ViolationAlertHelper shared] handleLiveMessage:m];
         }
     } else {
-        [[ViolationAlertHelper shared] probeMessage:messages source:@"didRecieveMessages"];
+        [[ViolationAlertHelper shared] handleLiveMessage:messages];
     }
 }
 
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.2.0 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.3.0 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
