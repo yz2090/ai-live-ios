@@ -550,8 +550,9 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
         NSString *contentType = nil;
         NSData *data = nil;
         @try {
-            if ([message respondsToSelector:@selector(contentType)]) {
-                contentType = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(contentType));
+            // content_type 字段的 ObjC 方法是 liveIM_method（protobuf 生成）
+            if ([message respondsToSelector:@selector(liveIM_method)]) {
+                contentType = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(liveIM_method));
             }
             if ([message respondsToSelector:@selector(data)]) {
                 data = ((NSData *(*)(id, SEL))objc_msgSend)(message, @selector(data));
@@ -825,7 +826,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.3.0 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.3.1 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
