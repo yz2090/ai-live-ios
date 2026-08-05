@@ -524,7 +524,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.0.7 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.0.8 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
@@ -539,7 +539,13 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
         deviceId = kDefaultDeviceId;
     }
     // v0.0.7 侦察模式（plist scout_mode=true 开启）
-    gScoutMode = [cfg[@"scout_mode"] boolValue];
+    // v0.0.8：无 plist 或未设置 scout_mode → 默认开启侦察（方便零配置直接采集）
+    if (!cfg || ![cfg objectForKey:@"scout_mode"]) {
+        gScoutMode = YES;
+        NSLog(@"[ViolationAlert] 🔧 无配置或未设置scout_mode → 默认开启侦察模式");
+    } else {
+        gScoutMode = [cfg[@"scout_mode"] boolValue];
+    }
     NSLog(@"[ViolationAlert] 配置: test_mode=%d scout_mode=%d device_id=%@", gTestMode, gScoutMode, deviceId);
 
     // 启动兜底轮询
