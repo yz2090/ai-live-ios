@@ -409,6 +409,37 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     }];
 }
 
+// v0.3.3: 主播端电商类侦察——枚举含电商/订单/数据关键词的类及方法
+- (void)enumerateEcomClasses {
+    int total = objc_getClassList(NULL, 0);
+    Class *classes = (Class *)malloc(sizeof(Class) * total);
+    objc_getClassList(classes, total);
+    
+    NSArray *keywords = @[@"Ecom", @"Anchor", @"LiveEcom", @"LiveOrder", @"OrderCenter", @"LiveCommerce", @"LiveData", @"AnchorData", @"LiveCenter", @"RoomData", @"Statistic", @"Analytics", @"Dashboard", @"LivePanel"];
+    NSMutableArray *matches = [NSMutableArray array];
+    
+    for (int i = 0; i < total; i++) {
+        Class c = classes[i];
+        const char *name = class_getName(c);
+        if (!name) continue;
+        NSString *cn = [NSString stringWithUTF8String:name];
+        for (NSString *kw in keywords) {
+            if ([cn containsString:kw]) {
+                [matches addObject:cn];
+                break;
+            }
+        }
+    }
+    free(classes);
+    
+    NSLog(@"[ViolationAlert] 🔍 主播电商类枚举: 共%d个类, 匹配%d个", total, (int)matches.count);
+    [self reportScout:@"ecom_classes" payload:@{
+        @"total": @(total),
+        @"matched": @(matches.count),
+        @"list": [matches sortedArrayUsingSelector:@selector(compare:)]
+    }];
+}
+
 // 动态逆向：枚举核心直播消息类的方法签名（instance + class methods）
 - (void)enumerateMethods {
     NSArray *coreClasses = @[
@@ -545,6 +576,22 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
         return;
     }
     
+    // 1.5 主播端下单消息：HTSLiveRoomMessage → display_text.key=ecom_order_* → 上报 desc 服务器解析
+    if ([cls isEqualToString:@"HTSLiveRoomMessage"]) {
+        NSString *desc = @"";
+        @try {
+            if ([message respondsToSelector:@selector(description)]) {
+                desc = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(description));
+            }
+        } @catch (NSException *e) {}
+        // 只上报电商相关（下单），过滤普通房间消息
+        if ([desc containsString:@"ecom_order"]) {
+            [self reportRoomOrder:desc];
+            NSLog(@"[ViolationAlert] 🛒 主播端下单: %@", desc.length > 150 ? [desc substringToIndex:150] : desc);
+        }
+        return;
+    }
+    
     // 2. 电商消息（下单）：HTSLiveLiveEcomGeneralMessage → data 二进制 base64 上报
     if ([cls isEqualToString:@"HTSLiveLiveEcomGeneralMessage"]) {
         NSString *contentType = nil;
@@ -651,6 +698,33 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
         if (error) NSLog(@"[ViolationAlert] ❌ 电商上报失败: %@", error.localizedDescription);
         else NSLog(@"[ViolationAlert] ✅ 电商上报成功: %@", contentType);
+    }];
+    [task resume];
+}
+
+// 上报主播端下单消息（desc 文本，服务器正则解析用户+商品号）
+- (void)reportRoomOrder:(NSString *)desc {
+    NSDictionary *cfg = [self loadConfig];
+    NSString *deviceId = cfg[@"device_id"];
+    if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) deviceId = kDefaultDeviceId;
+    NSString *server = cfg[@"server"];
+    if (![server isKindOfClass:[NSString class]] || !server.length) server = kDefaultServer;
+    
+    NSString *urlStr = [NSString stringWithFormat:@"%@/api/say", server];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSDictionary *body = @{
+        @"phone_id": deviceId,
+        @"type": @"room_order",
+        @"desc": desc
+    };
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+    if (!jsonData) return;
+    req.HTTPBody = jsonData;
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        if (error) NSLog(@"[ViolationAlert] ❌ 下单上报失败: %@", error.localizedDescription);
+        else NSLog(@"[ViolationAlert] ✅ 下单上报成功");
     }];
     [task resume];
 }
@@ -852,7 +926,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.3.2 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.3.3 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
