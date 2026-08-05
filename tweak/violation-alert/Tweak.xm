@@ -2,7 +2,7 @@
 #import <Foundation/Foundation.h>
 
 // ============================================================
-// 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.5
+// 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.6
 // ============================================================
 // 背景：抖音直播违规弹窗是【自定义UI】（白卡片+红色警示三角+遮罩），
 //       不是 iOS 原生 UIAlertController，老版本 Hook 不到！
@@ -10,11 +10,12 @@
 //   1. Hook presentViewController —— 主力，捕获所有 present 弹窗 VC
 //   2. Hook UIAlertController viewDidAppear —— 原生弹窗双保险
 //   3. 定时轮询 alert 级独立窗口 —— 兜底 window 型弹窗
-// 策略：检测到弹窗立即推送，30 秒同类去重
+// 策略：检测到弹窗立即推送，30 秒同类去重，白名单关键词忽略
 // 配置（可选）：/var/mobile/Library/Preferences/com.ailive.violationalert.plist
-//   { device_id, server, test_mode }
+//   { device_id, server, test_mode, ignore_keywords }
 // 默认 device_id=99c79a server=http://59.110.152.66:18766
-// 默认 test_mode=YES（零配置自动弹【抖音风格】测试窗验证链路；设 false 转实战）
+// v0.0.6：默认【实战模式】（无 plist 不弹测试窗）；test_mode=true 可手动开测试
+//         新增 ignore_keywords 白名单（plist 数组，命中不推）
 // ============================================================
 
 static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.violationalert.plist";
@@ -104,7 +105,24 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     [task resume];
 }
 
-// 统一上报入口：拼文本 + 去重 + 上报
+// 白名单：命中关键词的弹窗不推（默认内置常见无害弹窗，plist ignore_keywords 可覆盖）
+- (BOOL)isIgnored:(NSString *)text {
+    NSArray *defaultIgnore = @[
+        @"关注成功", @"已关注", @"点赞成功", @"收藏成功",
+        @"已加入粉丝团", @"成为粉丝"
+    ];
+    NSDictionary *cfg = [self loadConfig];
+    NSArray *ign = cfg[@"ignore_keywords"];
+    if (![ign isKindOfClass:[NSArray class]] || ign.count == 0) {
+        ign = defaultIgnore;
+    }
+    for (NSString *kw in ign) {
+        if ([kw isKindOfClass:[NSString class]] && kw.length && [text containsString:kw]) return YES;
+    }
+    return NO;
+}
+
+// 统一上报入口：拼文本 + 白名单 + 去重 + 上报
 - (void)reportDialogWithClass:(NSString *)cls text:(NSString *)text source:(NSString *)source {
     NSMutableString *full = [NSMutableString string];
     if (cls.length) [full appendFormat:@"[%@]", cls];
@@ -114,6 +132,11 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     }
     if (!full.length) {
         [full appendFormat:@"[%@] 检测到弹窗", cls.length ? cls : @"unknown"];
+    }
+    // 白名单过滤
+    if ([self isIgnored:full]) {
+        NSLog(@"[ViolationAlert] ⏸ 白名单忽略: %@", full);
+        return;
     }
     NSString *key = [NSString stringWithFormat:@"%@|%@", cls ?: @"", text ?: @""];
     if (![self shouldReport:key]) {
@@ -373,14 +396,14 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.0.5 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.0.6 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
-    gTestMode = [cfg[@"test_mode"] boolValue];
-
-    // 零配置兜底：没有 plist 或没有 test_mode 字段时，自动开测试模式
+    // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
-        gTestMode = YES;
-        NSLog(@"[ViolationAlert] 🔧 无配置或未设置test_mode → 自动进入测试模式");
+        gTestMode = NO;
+        NSLog(@"[ViolationAlert] 🔧 无配置或未设置test_mode → 默认实战模式");
+    } else {
+        gTestMode = [cfg[@"test_mode"] boolValue];
     }
 
     NSString *deviceId = cfg[@"device_id"];
