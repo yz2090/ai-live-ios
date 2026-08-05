@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 
 // ============================================================
 // 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.7
@@ -40,6 +41,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 - (void)reportScout:(NSString *)kind payload:(NSDictionary *)payload;
 - (void)dumpHierarchy;
 - (void)findWebViews;
+- (void)enumerateClasses;
 @end
 
 @implementation ViolationAlertHelper
@@ -372,6 +374,37 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     }
 }
 
+// 动态逆向：枚举运行时所有类，过滤直播/评论/订单相关关键词上报
+- (void)enumerateClasses {
+    int total = objc_getClassList(NULL, 0);
+    Class *classes = (Class *)malloc(sizeof(Class) * total);
+    objc_getClassList(classes, total);
+    
+    NSArray *keywords = @[@"IESLive", @"HTSLive", @"LiveRoom", @"LiveMessage", @"Comment", @"Danmaku", @"Gift", @"Order", @"Chat", @"MessageModel", @"AwemeLive", @"LiveCell", @"LiveFeed"];
+    NSMutableArray *matches = [NSMutableArray array];
+    
+    for (int i = 0; i < total; i++) {
+        Class c = classes[i];
+        const char *name = class_getName(c);
+        if (!name) continue;
+        NSString *cn = [NSString stringWithUTF8String:name];
+        for (NSString *kw in keywords) {
+            if ([cn containsString:kw]) {
+                [matches addObject:cn];
+                break;
+            }
+        }
+    }
+    free(classes);
+    
+    NSLog(@"[ViolationAlert] 🔍 运行时类枚举: 共%d个类, 匹配%d个", total, (int)matches.count);
+    [self reportScout:@"classes" payload:@{
+        @"total": @(total),
+        @"matched": @(matches.count),
+        @"list": [matches sortedArrayUsingSelector:@selector(compare:)]
+    }];
+}
+
 // 兜底轮询：alert 级独立窗口
 - (void)startPolling {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -524,7 +557,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.0.9 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.1.0 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
@@ -552,12 +585,16 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     [[ViolationAlertHelper shared] startPolling];
 
     if (gScoutMode) {
-        // 侦察：等页面就绪后 dump 层级 + 找 WebView（v0.0.9 采样延长到 5 分钟，覆盖进直播间后的页面）
+        // 侦察：等页面就绪后 dump 层级 + 找 WebView + 枚举类名（v0.1.0）
         for (int i = 0; i < 12; i++) {
             double delay = 8.0 + i * 25.0;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [[ViolationAlertHelper shared] dumpHierarchy];
                 [[ViolationAlertHelper shared] findWebViews];
+                if (i == 1) {
+                    // 第二次采样时枚举一次运行时类名（类全集，较重）
+                    [[ViolationAlertHelper shared] enumerateClasses];
+                }
             });
         }
     }
