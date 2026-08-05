@@ -42,6 +42,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 - (void)dumpHierarchy;
 - (void)findWebViews;
 - (void)enumerateClasses;
+- (void)enumerateMethods;
 @end
 
 @implementation ViolationAlertHelper
@@ -405,6 +406,71 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     }];
 }
 
+// 动态逆向：枚举核心直播消息类的方法签名（instance + class methods）
+- (void)enumerateMethods {
+    NSArray *coreClasses = @[
+        @"HTSLiveMessageHandler",
+        @"HTSLiveMessageDispatcherAdapterImpl",
+        @"HTSGroupedLiveMessageHandler",
+        @"IESLiveChatChannelMessageDispatcher",
+        @"IESLiveIMMessageDispatcher",
+        @"IESLLLiveMessageCenter",
+        @"HTSLiveRoomChannelChatMessage",
+        @"HTSLiveRoomChannelChatRoot",
+        @"HTSLiveRoomChannelGiftMessage",
+        @"HTSLiveRoomChannelGiftRoot",
+        @"HTSLiveRoomChannelStateMessage",
+        @"HTSLiveRoomChannelSystemMessage",
+        @"HTSLiveRoomChannelAccessMessage",
+        @"HTSLiveRoomMessageRoot",
+        @"HTSLiveUnifiedMessageRoot",
+        @"HTSLiveGiftMessageRoot",
+        @"HTSLiveGiftCommentMessageRoot",
+        @"HTSLiveWebcastChatLikeMessageRoot",
+        @"IESLiveMessageFilterProcesser",
+        @"IESLiveMessageListBaseQueue",
+        @"IESLiveMessageListCommonCell"
+    ];
+    NSMutableArray *result = [NSMutableArray array];
+    
+    for (NSString *clsName in coreClasses) {
+        Class cls = NSClassFromString(clsName);
+        if (!cls) {
+            [result addObject:[NSString stringWithFormat:@"%@: <不存在>", clsName]];
+            continue;
+        }
+        NSMutableString *methods = [NSMutableString string];
+        
+        // 实例方法
+        unsigned int mc = 0;
+        Method *mList = class_copyMethodList(cls, &mc);
+        for (unsigned int i = 0; i < mc; i++) {
+            SEL sel = method_getName(mList[i]);
+            NSString *sig = [NSString stringWithUTF8String:sel_getName(sel)];
+            [methods appendFormat:@"  -%@\n", sig];
+        }
+        free(mList);
+        
+        // 类方法
+        unsigned int cc = 0;
+        Method *cList = class_copyMethodList(object_getClass(cls), &cc);
+        for (unsigned int i = 0; i < cc; i++) {
+            SEL sel = method_getName(cList[i]);
+            NSString *sig = [NSString stringWithUTF8String:sel_getName(sel)];
+            [methods appendFormat:@"  +%@\n", sig];
+        }
+        free(cList);
+        
+        NSString *entry = [NSString stringWithFormat:@"=== %@ (%u methods) ===\n%@", clsName, mc + cc, methods];
+        [result addObject:entry];
+    }
+    
+    NSLog(@"[ViolationAlert] 🔍 方法枚举完成");
+    [self reportScout:@"methods" payload:@{
+        @"list": result
+    }];
+}
+
 // 兜底轮询：alert 级独立窗口
 - (void)startPolling {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -557,7 +623,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.1.0 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.1.1 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
@@ -594,6 +660,8 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
                 if (i == 1) {
                     // 第二次采样时枚举一次运行时类名（类全集，较重）
                     [[ViolationAlertHelper shared] enumerateClasses];
+                    // v0.1.1：同批次枚举核心消息类方法签名
+                    [[ViolationAlertHelper shared] enumerateMethods];
                 }
             });
         }
