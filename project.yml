@@ -45,3 +45,41 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     scheme:
       testTargets: []
+  OpenClawShell:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: OpenClawShell
+        excludes:
+          - "Info.plist"
+    info:
+      path: OpenClawShell/Info.plist
+      properties:
+        CFBundleName: OpenClaw
+        CFBundleDisplayName: OpenClaw
+        CFBundleIdentifier: com.ailive.openclawshell
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: 1.0.0
+        CFBundlePackageType: APPL
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ailive.openclawshell
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_FILE: OpenClawShell/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_VERSION: "5.0"
+        ENABLE_BITCODE: NO
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    scheme:
+      testTargets: []
