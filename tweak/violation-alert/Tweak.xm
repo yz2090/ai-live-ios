@@ -562,6 +562,17 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
             NSString *b64 = [data base64EncodedStringWithOptions:0];
             [self reportEcom:contentType ?: @"" dataB64:b64];
             NSLog(@"[ViolationAlert] 🛒 电商消息: %@ (%lu bytes)", contentType ?: @"", (unsigned long)data.length);
+        } else {
+            // data 为空 → 上报 description 帮助诊断字段结构
+            NSString *desc = @"";
+            @try {
+                desc = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(description));
+            } @catch (NSException *e) {}
+            if (desc.length) {
+                NSDictionary *payload = @{@"class": cls, @"desc": desc};
+                [self reportScout:@"probe" payload:payload];
+                NSLog(@"[ViolationAlert] ⚠️ 电商 data 为空，上报 desc: %@", desc.length > 200 ? [desc substringToIndex:200] : desc);
+            }
         }
         return;
     }
@@ -571,7 +582,22 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
         return;
     }
     
-    // 其他消息：暂不处理（后续扩展：RoomStats→在线人数等）
+    // 其他消息：上报类名+description 帮助识别主播端消息类型（限频 10s/类）
+    static NSMutableDictionary *unknownTimes = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ unknownTimes = [NSMutableDictionary dictionary]; });
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    NSNumber *last = unknownTimes[cls];
+    if (!last || (now - last.doubleValue) > 10) {
+        unknownTimes[cls] = @(now);
+        NSString *desc = @"";
+        @try {
+            desc = ((NSString *(*)(id, SEL))objc_msgSend)(message, @selector(description));
+        } @catch (NSException *e) {}
+        NSDictionary *payload = @{@"class": cls, @"desc": desc.length > 800 ? [desc substringToIndex:800] : desc};
+        [self reportScout:@"probe" payload:payload];
+        NSLog(@"[ViolationAlert] 🔍 未知消息: %@", cls);
+    }
 }
 
 // 上报评论到 /api/say
@@ -826,7 +852,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.3.1 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.3.2 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
