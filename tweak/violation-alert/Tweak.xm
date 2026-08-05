@@ -2,7 +2,7 @@
 #import <Foundation/Foundation.h>
 
 // ============================================================
-// 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.6
+// 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.7
 // ============================================================
 // 背景：抖音直播违规弹窗是【自定义UI】（白卡片+红色警示三角+遮罩），
 //       不是 iOS 原生 UIAlertController，老版本 Hook 不到！
@@ -11,17 +11,21 @@
 //   2. Hook UIAlertController viewDidAppear —— 原生弹窗双保险
 //   3. 定时轮询 alert 级独立窗口 —— 兜底 window 型弹窗
 // 策略：检测到弹窗立即推送，30 秒同类去重，白名单关键词忽略
+// v0.0.7 新增【侦察模式】(plist scout_mode=true)：
+//   - 定时 dump 抖音直播页面视图层级（找评论列表/订单提示类名）
+//   - 检测页面内 WKWebView（罗盘大屏是否 H5）
+//   - 上报 /api/scout_report（不推 Bark，供逆向分析）
 // 配置（可选）：/var/mobile/Library/Preferences/com.ailive.violationalert.plist
-//   { device_id, server, test_mode, ignore_keywords }
+//   { device_id, server, test_mode, ignore_keywords, scout_mode }
 // 默认 device_id=99c79a server=http://59.110.152.66:18766
-// v0.0.6：默认【实战模式】（无 plist 不弹测试窗）；test_mode=true 可手动开测试
-//         新增 ignore_keywords 白名单（plist 数组，命中不推）
+// 默认【实战模式】（无 plist 不弹测试窗）；test_mode=true 可手动开测试
 // ============================================================
 
 static NSString *kPrefsPath = @"/var/mobile/Library/Preferences/com.ailive.violationalert.plist";
 static NSString *kDefaultDeviceId = @"99c79a";   // 默认测试机设备ID（99c79a = 真机3）
 static NSString *kDefaultServer = @"http://59.110.152.66:18766";
 static BOOL gTestMode = NO;
+static BOOL gScoutMode = NO;
 static BOOL gTestAlertShown = NO;
 static UIViewController *gTestDialog = nil;      // 强引用测试弹窗，供按钮 dismiss
 static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
@@ -33,6 +37,9 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 - (void)startPolling;
 - (void)showTestAlert;
 - (UIViewController *)topViewController;
+- (void)reportScout:(NSString *)kind payload:(NSDictionary *)payload;
+- (void)dumpHierarchy;
+- (void)findWebViews;
 @end
 
 @implementation ViolationAlertHelper
@@ -244,6 +251,127 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     });
 }
 
+// 侦察数据上报（不推 Bark，只发服务器日志供逆向分析）
+- (void)reportScout:(NSString *)kind payload:(NSDictionary *)payload {
+    NSDictionary *cfg = [self loadConfig];
+    NSString *deviceId = cfg[@"device_id"];
+    if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) {
+        deviceId = kDefaultDeviceId;
+    }
+    NSString *server = cfg[@"server"];
+    if (![server isKindOfClass:[NSString class]] || !server.length) {
+        server = kDefaultServer;
+    }
+    NSString *urlStr = [NSString stringWithFormat:@"%@/api/scout_report", server];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSDictionary *body = @{
+        @"device_id": deviceId,
+        @"kind": kind ?: @"",
+        @"payload": payload ?: @{}
+    };
+    NSError *err = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&err];
+    if (err) {
+        NSLog(@"[ViolationAlert] ⚠️ 侦察JSON失败: %@", err);
+        return;
+    }
+    req.HTTPBody = jsonData;
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        if (error) {
+            NSLog(@"[ViolationAlert] ❌ 侦察上报失败: %@", error.localizedDescription);
+        } else {
+            NSLog(@"[ViolationAlert] ✅ 侦察上报成功: %@", kind);
+        }
+    }];
+    [task resume];
+}
+
+// 递归生成视图层级描述（类名 + frame + 是否含文字）
+- (NSString *)describeView:(UIView *)view depth:(int)depth maxDepth:(int)maxDepth {
+    if (!view || depth > maxDepth) return @"";
+    NSMutableString *s = [NSMutableString string];
+    for (int i = 0; i < depth; i++) [s appendString:@"  "];
+    NSString *cls = NSStringFromClass(view.class);
+    CGRect f = view.frame;
+    [s appendFormat:@"%@ %@ (%.0f,%.0f %.0fx%.0f)", cls, view.hidden ? @"HIDDEN" : @"", f.origin.x, f.origin.y, f.size.width, f.size.height];
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *t = ((UILabel *)view).text;
+        if (t.length) [s appendFormat:@" text=\"%@\"", t.length > 40 ? [t substringToIndex:40] : t];
+    } else if ([view isKindOfClass:[UIButton class]]) {
+        NSString *t = ((UIButton *)view).titleLabel.text;
+        if (t.length) [s appendFormat:@" btn=\"%@\"", t.length > 30 ? [t substringToIndex:30] : t];
+    } else if ([view isKindOfClass:[UITextField class]]) {
+        NSString *t = ((UITextField *)view).placeholder;
+        if (t.length) [s appendFormat:@" ph=\"%@\"", t];
+    }
+    [s appendString:@"\n"];
+    for (UIView *sub in view.subviews) {
+        [s appendString:[self describeView:sub depth:depth + 1 maxDepth:maxDepth]];
+    }
+    return s;
+}
+
+// 侦察：dump 当前窗口视图层级（找评论列表/订单提示的类名）
+- (void)dumpHierarchy {
+    NSMutableArray *windows = [NSMutableArray array];
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *ws = (UIWindowScene *)scene;
+        for (UIWindow *w in ws.windows) {
+            if (!w.hidden && w.rootViewController) [windows addObject:w];
+        }
+    }
+    if (!windows.count) {
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (!w.hidden && w.rootViewController) [windows addObject:w];
+        }
+    }
+    NSMutableArray *hierarchies = [NSMutableArray array];
+    for (UIWindow *w in windows) {
+        NSString *desc = [self describeView:w depth:0 maxDepth:7];
+        if (desc.length > 3000) desc = [desc substringToIndex:3000];
+        [hierarchies addObject:desc];
+    }
+    [self reportScout:@"hierarchy" payload:@{
+        @"windows": hierarchies.count,
+        @"dump": [hierarchies componentsJoinedByString:@"\n---\n"]
+    }];
+}
+
+// 侦察：检测页面内是否有 WKWebView / UIWebView（罗盘大屏是否 H5）
+- (void)findWebViews {
+    NSMutableArray *found = [NSMutableArray array];
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        [self scanWebViewsInView:w.rootViewController.view found:found depth:0];
+    }
+    [self reportScout:@"webview" payload:@{
+        @"count": @(found.count),
+        @"list": found
+    }];
+}
+
+- (void)scanWebViewsInView:(UIView *)view found:(NSMutableArray *)found depth:(int)depth {
+    if (!view || depth > 10) return;
+    NSString *cls = NSStringFromClass(view.class);
+    if ([cls containsString:@"WKWebView"] || [cls containsString:@"UIWebView"] || [cls containsString:@"WebView"]) {
+        NSMutableDictionary *info = [NSMutableDictionary dictionary];
+        info[@"class"] = cls;
+        info[@"frame"] = NSStringFromCGRect(view.frame);
+        // 尝试拿 URL
+        if ([view respondsToSelector:@selector(URL)]) {
+            id url = [view performSelector:@selector(URL)];
+            if ([url isKindOfClass:[NSURL class]]) info[@"url"] = [(NSURL *)url absoluteString];
+        }
+        [found addObject:info];
+    }
+    for (UIView *sub in view.subviews) {
+        [self scanWebViewsInView:sub found:found depth:depth + 1];
+    }
+}
+
 // 兜底轮询：alert 级独立窗口
 - (void)startPolling {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -396,7 +524,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.0.6 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.0.7 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
@@ -410,10 +538,23 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     if (![deviceId isKindOfClass:[NSString class]] || !deviceId.length) {
         deviceId = kDefaultDeviceId;
     }
-    NSLog(@"[ViolationAlert] 配置: test_mode=%d device_id=%@", gTestMode, deviceId);
+    // v0.0.7 侦察模式（plist scout_mode=true 开启）
+    gScoutMode = [cfg[@"scout_mode"] boolValue];
+    NSLog(@"[ViolationAlert] 配置: test_mode=%d scout_mode=%d device_id=%@", gTestMode, gScoutMode, deviceId);
 
     // 启动兜底轮询
     [[ViolationAlertHelper shared] startPolling];
+
+    if (gScoutMode) {
+        // 侦察：等页面就绪后 dump 层级 + 找 WebView（多次采样）
+        for (int i = 0; i < 6; i++) {
+            double delay = 5.0 + i * 10.0;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [[ViolationAlertHelper shared] dumpHierarchy];
+                [[ViolationAlertHelper shared] findWebViews];
+            });
+        }
+    }
 
     if (gTestMode) {
         // 多次尝试弹测试窗（抖音界面就绪需要时间）
