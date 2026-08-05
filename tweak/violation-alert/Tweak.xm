@@ -43,6 +43,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 - (void)findWebViews;
 - (void)enumerateClasses;
 - (void)enumerateMethods;
+- (void)probeMessage:(id)message source:(NSString *)source;
 @end
 
 @implementation ViolationAlertHelper
@@ -471,6 +472,78 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     }];
 }
 
+// v0.2.0 消息探针：拦截直播消息，dump 类名+字段结构上报（不推Bark）
+- (void)probeMessage:(id)message source:(NSString *)source {
+    if (!message) return;
+    // 频率限制：每类消息最多 1 次/3秒，防刷爆
+    static NSMutableDictionary *lastProbe = nil;
+    if (!lastProbe) lastProbe = [NSMutableDictionary dictionary];
+    NSString *cls = NSStringFromClass([message class]);
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    NSNumber *last = lastProbe[cls];
+    if (last && (now - last.doubleValue) < 3.0) return;
+    lastProbe[cls] = @(now);
+    
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[@"source"] = source ?: @"";
+    info[@"class"] = cls;
+    info[@"methods"] = [self methodNamesForClass:[message class]];
+    
+    // 尝试提取关键文本字段（评论内容/用户名等）
+    NSMutableString *textInfo = [NSMutableString string];
+    NSArray *textSelectors = @[@"text", @"content", @"message", @"userName", @"nickname", @"displayText", @"description", @"tipText", @"localTipText", @"common", @"user", @"chatMessage", @"gift", @"order"];
+    for (NSString *selName in textSelectors) {
+        SEL sel = NSSelectorFromString(selName);
+        if ([message respondsToSelector:sel]) {
+            @try {
+                id val = [message performSelector:sel];
+                if (val) {
+                    if ([val isKindOfClass:[NSString class]]) {
+                        [textInfo appendFormat:@"%@=%@\n", selName, val];
+                    } else if ([val isKindOfClass:[NSArray class]]) {
+                        [textInfo appendFormat:@"%@=<array %lu>\n", selName, (unsigned long)[(NSArray *)val count]];
+                    } else if ([val isKindOfClass:[NSDictionary class]]) {
+                        [textInfo appendFormat:@"%@=<dict %lu>\n", selName, (unsigned long)[(NSDictionary *)val count]];
+                    } else if ([val isKindOfClass:[NSNumber class]]) {
+                        [textInfo appendFormat:@"%@=%@\n", selName, val];
+                    } else {
+                        [textInfo appendFormat:@"%@=<%@>\n", selName, NSStringFromClass([val class])];
+                    }
+                }
+            } @catch (NSException *e) {}
+        }
+    }
+    info[@"texts"] = textInfo;
+    
+    // 上报（限制单条大小）
+    NSString *dumpStr = [NSString stringWithFormat:@"[%@] %@\n---\n%@", source ?: @"", cls, textInfo];
+    if (dumpStr.length > 3000) dumpStr = [dumpStr substringToIndex:3000];
+    [self reportScout:@"probe" payload:info];
+    NSLog(@"[ViolationAlert] 📡 消息探针: %@", dumpStr);
+}
+
+// 辅助：列出类的方法名（实例方法，去重）
+- (NSArray *)methodNamesForClass:(Class)cls {
+    NSMutableArray *names = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    Class cur = cls;
+    while (cur && cur != [NSObject class]) {
+        unsigned int mc = 0;
+        Method *mList = class_copyMethodList(cur, &mc);
+        for (unsigned int i = 0; i < mc; i++) {
+            SEL sel = method_getName(mList[i]);
+            NSString *sig = [NSString stringWithUTF8String:sel_getName(sel)];
+            if (![seen containsObject:sig]) {
+                [seen addObject:sig];
+                [names addObject:sig];
+            }
+        }
+        free(mList);
+        cur = class_getSuperclass(cur);
+    }
+    return names;
+}
+
 // 兜底轮询：alert 级独立窗口
 - (void)startPolling {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -622,8 +695,30 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 
 %end
 
+// v0.2.0 消息探针：拦截直播 IM 消息分发（评论/礼物/下单/系统消息全走这里）
+%hook IESLiveIMMessageDispatcher
+
+- (void)dispatchMessage:(id)message {
+    %orig;
+    [[ViolationAlertHelper shared] probeMessage:message source:@"dispatchMessage"];
+}
+
+- (void)didRecieveMessages:(id)messages {
+    %orig;
+    // 可能是数组/包装对象，逐个探
+    if ([messages isKindOfClass:[NSArray class]]) {
+        for (id m in (NSArray *)messages) {
+            [[ViolationAlertHelper shared] probeMessage:m source:@"didRecieveMessages"];
+        }
+    } else {
+        [[ViolationAlertHelper shared] probeMessage:messages source:@"didRecieveMessages"];
+    }
+}
+
+%end
+
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.1.1 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.2.0 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
