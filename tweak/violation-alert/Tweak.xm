@@ -331,8 +331,8 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     }
     NSMutableArray *hierarchies = [NSMutableArray array];
     for (UIWindow *w in windows) {
-        NSString *desc = [self describeView:w depth:0 maxDepth:7];
-        if (desc.length > 3000) desc = [desc substringToIndex:3000];
+        NSString *desc = [self describeView:w depth:0 maxDepth:15];
+        if (desc.length > 12000) desc = [desc substringToIndex:12000];
         [hierarchies addObject:desc];
     }
     [self reportScout:@"hierarchy" payload:@{
@@ -524,7 +524,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
 %end
 
 %ctor {
-    NSLog(@"[ViolationAlert] ===== v0.0.8 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
+    NSLog(@"[ViolationAlert] ===== v0.0.9 已加载 (bundle: %@) =====", [[NSBundle mainBundle] bundleIdentifier]);
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     // v0.0.6：默认实战模式。没有 plist 或没 test_mode 字段 → test_mode=NO（不弹测试窗）
     if (!cfg || ![cfg objectForKey:@"test_mode"]) {
@@ -552,9 +552,9 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
     [[ViolationAlertHelper shared] startPolling];
 
     if (gScoutMode) {
-        // 侦察：等页面就绪后 dump 层级 + 找 WebView（多次采样）
-        for (int i = 0; i < 6; i++) {
-            double delay = 5.0 + i * 10.0;
+        // 侦察：等页面就绪后 dump 层级 + 找 WebView（v0.0.9 采样延长到 5 分钟，覆盖进直播间后的页面）
+        for (int i = 0; i < 12; i++) {
+            double delay = 8.0 + i * 25.0;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [[ViolationAlertHelper shared] dumpHierarchy];
                 [[ViolationAlertHelper shared] findWebViews];
