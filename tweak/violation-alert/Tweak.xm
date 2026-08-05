@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 // ============================================================
 // 违规弹窗检测 Tweak（Dopamine 越狱）v0.0.7
@@ -496,7 +497,8 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
         SEL sel = NSSelectorFromString(selName);
         if ([message respondsToSelector:sel]) {
             @try {
-                id val = [message performSelector:sel];
+                id (*fn)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+                id val = fn(message, sel);
                 if (val) {
                     if ([val isKindOfClass:[NSString class]]) {
                         [textInfo appendFormat:@"%@=%@\n", selName, val];
