@@ -336,7 +336,7 @@ static NSMutableDictionary *gLastReport = nil;   // 去重表 key -> NSDate
         [hierarchies addObject:desc];
     }
     [self reportScout:@"hierarchy" payload:@{
-        @"windows": hierarchies.count,
+        @"windows": @(hierarchies.count),
         @"dump": [hierarchies componentsJoinedByString:@"\n---\n"]
     }];
 }
