@@ -166,7 +166,7 @@ final class ChatViewModel: ObservableObject {
         let idempotencyKey = UUID().uuidString
         var params: [String: Any] = [
             "sessionKey": sessionKey,
-            "text": text,
+            "message": text,
             "idempotencyKey": idempotencyKey
         ]
         if !attachments.isEmpty {
