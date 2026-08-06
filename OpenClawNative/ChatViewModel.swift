@@ -24,7 +24,7 @@ struct ChatAttachment: Identifiable, Equatable {
 }
 
 // MARK: - 会话状态
-enum ChatConnectionState {
+enum ChatConnectionState: Equatable {
     case disconnected, connecting, connected, error(String)
 }
 
@@ -35,6 +35,7 @@ final class ChatViewModel: ObservableObject {
     @Published var connectionState: ChatConnectionState = .disconnected
     @Published var inputText = ""
     @Published var isSending = false
+    @Published var lastError: String?
 
     private var client: OpenClawClient?
     private var sessionKey: String?

@@ -1,5 +1,4 @@
 import SwiftUI
-import PhotosUI
 import UniformTypeIdentifiers
 import Speech
 
@@ -22,7 +21,6 @@ struct ContentView: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFilePicker = false
-    @State private var pickedItems: [PhotosPickerItem] = []
     @State private var isRecording = false
 
     var body: some View {
@@ -56,31 +54,25 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            // 相册
-            .photosPicker(isPresented: $showPhotoPicker, selection: $pickedItems, maxSelectionCount: 3, matching: .images)
-            .onChange(of: pickedItems) { items in
-                guard !items.isEmpty else { return }
-                Task {
-                    for item in items {
-                        if let data = try? await item.loadTransferable(type: Data.self),
-                           let img = UIImage(data: data) {
-                            let b64 = data.base64EncodedString()
-                            let att = ChatAttachment(
-                                fileName: "photo-\(Int(Date().timeIntervalSince1970)).jpg",
-                                mimeType: "image/jpeg",
-                                dataURL: "data:image/jpeg;base64,\(b64)",
-                                sizeBytes: data.count,
-                                thumbnail: img
-                            )
-                            vm.sendWithAttachment(att, text: "")
-                        }
+            // 相册（用 UIImagePickerController 兼容 iOS 15）
+            .fullScreenCover(isPresented: $showPhotoPicker) {
+                ImagePicker(sourceType: .photoLibrary) { image in
+                    if let data = image.jpegData(compressionQuality: 0.8) {
+                        let b64 = data.base64EncodedString()
+                        let att = ChatAttachment(
+                            fileName: "photo-\(Int(Date().timeIntervalSince1970)).jpg",
+                            mimeType: "image/jpeg",
+                            dataURL: "data:image/jpeg;base64,\(b64)",
+                            sizeBytes: data.count,
+                            thumbnail: image
+                        )
+                        vm.sendWithAttachment(att, text: "")
                     }
-                    pickedItems = []
                 }
             }
             // 相机
             .fullScreenCover(isPresented: $showCamera) {
-                CameraView { image in
+                ImagePicker(sourceType: .camera) { image in
                     if let data = image.jpegData(compressionQuality: 0.8) {
                         let b64 = data.base64EncodedString()
                         let att = ChatAttachment(
@@ -214,9 +206,8 @@ struct ContentView: View {
 
             // 文本输入行
             HStack(spacing: 8) {
-                TextField("输入消息...", text: $vm.inputText, axis: .vertical)
+                TextField("输入消息...", text: $vm.inputText)
                     .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...4)
                 Button {
                     vm.send()
                 } label: {
@@ -377,14 +368,15 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - 相机
-struct CameraView: UIViewControllerRepresentable {
+// MARK: - 通用图片选择器（相机/相册，兼容 iOS 15）
+struct ImagePicker: UIViewControllerRepresentable {
+    var sourceType: UIImagePickerController.SourceType = .photoLibrary
     var onCapture: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
-        picker.sourceType = .camera
+        picker.sourceType = sourceType
         picker.delegate = context.coordinator
         return picker
     }
@@ -394,8 +386,8 @@ struct CameraView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraView
-        init(_ parent: CameraView) { self.parent = parent }
+        let parent: ImagePicker
+        init(_ parent: ImagePicker) { self.parent = parent }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let img = info[.originalImage] as? UIImage {
                 parent.onCapture(img)
