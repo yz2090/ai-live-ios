@@ -206,16 +206,39 @@ final class ChatViewModel: ObservableObject {
         switch event.name {
         case "agent":
             let p = event.payload
-            // 流式文本
+            // 新版格式：stream=assistant, data={text, delta}
+            if let stream = p["stream"] as? String, stream == "assistant" {
+                if let data = p["data"] as? [String: Any] {
+                    // delta 是增量，追加；text 是累计，优先用 text 保持完整
+                    let delta = data["delta"] as? String ?? ""
+                    let text = data["text"] as? String ?? ""
+                    if let idx = messages.indices.last, messages[idx].isStreaming {
+                        messages[idx].text = text.isEmpty ? messages[idx].text + delta : text
+                    } else {
+                        messages.append(ChatMessage(role: .assistant, text: text.isEmpty ? delta : text, isStreaming: true))
+                    }
+                }
+            }
+            // 结束标记：lifecycle phase=end 或 finish
+            if let stream = p["stream"] as? String, stream == "lifecycle" {
+                if let data = p["data"] as? [String: Any],
+                   let phase = data["phase"] as? String, phase == "end" {
+                    if let idx = messages.indices.last, messages[idx].isStreaming {
+                        messages[idx].isStreaming = false
+                    }
+                    isSending = false
+                    activeRunId = nil
+                }
+            }
+            // 兼容旧格式 deltaText
             if let delta = p["deltaText"] as? String, !delta.isEmpty {
                 if let idx = messages.indices.last, messages[idx].isStreaming {
                     messages[idx].text += delta
                 } else {
-                    // 没有占位气泡则新建
                     messages.append(ChatMessage(role: .assistant, text: delta, isStreaming: true))
                 }
             }
-            // 完成
+            // 兼容旧格式 done
             if let done = p["done"] as? Bool, done == true,
                let idx = messages.indices.last, messages[idx].isStreaming {
                 messages[idx].isStreaming = false
