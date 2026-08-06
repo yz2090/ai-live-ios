@@ -20,7 +20,8 @@ struct ShellWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.scrollView.bounces = false
         webView.isOpaque = false
-        if let url = URL(string: "http://59.110.152.66:18899") {
+        let serverURL = Bundle.main.object(forInfoDictionaryKey: "ServerURL") as? String ?? ""
+        if let url = URL(string: serverURL) {
             webView.load(URLRequest(url: url))
         }
         return webView

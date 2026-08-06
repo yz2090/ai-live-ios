@@ -7,6 +7,9 @@ on:
       - 'project.yml'
   workflow_dispatch:
 
+env:
+  OPENCLAW_SERVER_URL: ${{ secrets.OPENCLAW_SERVER_URL }}
+
 jobs:
   build:
     runs-on: macos-15
@@ -26,6 +29,7 @@ jobs:
         run: |
           xcodebuild -project AiLiveLite.xcodeproj \
             -scheme OpenClawShell \
+            OPENCLAW_SERVER_URL="$OPENCLAW_SERVER_URL" \
             -destination 'generic/platform=iOS' \
             -configuration Release \
             CODE_SIGNING_ALLOWED=NO \

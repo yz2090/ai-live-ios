@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 // MARK: - 服务器配置（2号测试服务器，与安卓采集端一致）
-let kServerHost = "59.110.152.66"
+let kServerHost = Bundle.main.object(forInfoDictionaryKey: "ServerHost") as? String ?? ""
 let kServerPort = 18766
 let kDeviceIdKey = "ailive_lite_iphone_device_id"
 

@@ -5,6 +5,9 @@ on:
     branches: [ main, lite ]
   workflow_dispatch:
 
+env:
+  OPENCLAW_SERVER_HOST: ${{ secrets.OPENCLAW_SERVER_HOST }}
+
 jobs:
   build:
     runs-on: macos-15
@@ -29,7 +32,8 @@ jobs:
             -scheme AiLiveLite \
             -destination 'generic/platform=iOS Simulator' \
             -configuration Release \
-            CODE_SIGNING_ALLOWED=NO build \
+            CODE_SIGNING_ALLOWED=NO \
+            OPENCLAW_SERVER_HOST="$OPENCLAW_SERVER_HOST" build \
             -quiet
           echo "✅ Simulator 编译通过"
 
@@ -40,6 +44,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -configuration Release \
             CODE_SIGNING_ALLOWED=NO \
+            OPENCLAW_SERVER_HOST="$OPENCLAW_SERVER_HOST" \
             -derivedDataPath build \
             build \
             -quiet

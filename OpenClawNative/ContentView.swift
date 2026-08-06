@@ -329,7 +329,7 @@ struct MessageBubble: View {
 struct SettingsView: View {
     @EnvironmentObject var vm: ChatViewModel
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("gw_server") private var server = "ws://59.110.152.66:18899"
+    @AppStorage("gw_server") private var server = ""
     @AppStorage("gw_token") private var token = ""
 
     var body: some View {
@@ -361,7 +361,7 @@ struct SettingsView: View {
                 }
             }
             .onAppear {
-                server = vm.serverURL
+                server = vm.serverURL.isEmpty ? (Bundle.main.object(forInfoDictionaryKey: "ServerURL") as? String ?? "") : vm.serverURL
                 token = vm.token
             }
         }

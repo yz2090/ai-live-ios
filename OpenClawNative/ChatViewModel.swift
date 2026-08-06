@@ -42,7 +42,7 @@ final class ChatViewModel: ObservableObject {
     private var activeRunId: String?
 
     // 配置（可在设置页改，默认公网）
-    var serverURL = "ws://59.110.152.66:18899"
+    var serverURL = Bundle.main.object(forInfoDictionaryKey: "ServerURL") as? String ?? ""
     var token = ""  // 首次使用填 token
 
     // MARK: 连接

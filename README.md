@@ -12,7 +12,7 @@
 ```
 
 ## 功能
-- ✅ WebSocket 连接服务器 `/ws_iphone/{device_id}`（2号测试服务器 59.110.152.66:18766）
+- ✅ WebSocket 连接服务器 `/ws_iphone/{device_id}`（2号测试服务器 <服务器地址>）
 - ✅ 接收 TTS 音频 → 队列播放（不重叠）
 - ✅ 设备ID：自动生成，填到安卓端"iPhone设备ID"即绑定
 - ✅ 断线自动重连 + 后台持续运行（UIBackgroundModes: audio + 静音保活）
