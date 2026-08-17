@@ -32,6 +32,8 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             InfoRow(label: "服务器", value: "\(kServerHost):\(kServerPort)")
                             InfoRow(label: "播放状态", value: audioPlayer.isPlaying ? "播报中" : "待命")
+                            // === MOD: 2026-08-17 方案A 主界面也显示安卓在线状态 ===
+                            InfoRow(label: "安卓状态", value: wsManager.androidOnline ? "🟢 在线" : "🔴 离线")
                         }
                         .font(.caption)
                         .foregroundColor(.secondary)

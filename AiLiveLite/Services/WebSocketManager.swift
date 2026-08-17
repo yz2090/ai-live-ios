@@ -15,6 +15,7 @@ class WebSocketManager: NSObject, ObservableObject {
     @Published var recentLog: String = ""
     @Published var lastMetaText: String = ""      // 最近一条播报文字（meta 文本）
     @Published var lastMetaType: String = ""      // 最近一条播报类型
+    @Published var androidOnline: Bool = false     // === MOD: 2026-08-17 方案A 安卓在线状态（meta推送携带）====
 
     // 设备ID：首次启动自动生成，用户可查看并填到安卓端
     @Published var deviceId: String = "" {
@@ -160,9 +161,12 @@ class WebSocketManager: NSObject, ObservableObject {
         case "meta":
             let msgType = json["msg_type"] as? String ?? ""
             let msgText = json["text"] as? String ?? ""
+            let androidOn = json["android_online"] as? Bool ?? false
             DispatchQueue.main.async {
                 self.lastMetaType = msgType
                 self.lastMetaText = msgText
+                // === MOD: 2026-08-17 方案A 随推送刷新安卓在线状态 ===
+                self.androidOnline = androidOn
             }
             addLog("📢 [\(msgType)] \(msgText)")
         case "welcome":

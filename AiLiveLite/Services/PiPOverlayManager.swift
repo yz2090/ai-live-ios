@@ -38,6 +38,9 @@ final class PiPOverlayManager: NSObject, ObservableObject {
 
     // 订阅 WS 的播报文字变化
     private var wsCancellable: AnyCancellable?
+    // === MOD: 2026-08-17 方案A 订阅安卓在线状态，随播报刷新渲染 ===
+    private var androidOnline = false
+    private var wsStatusCancellable: AnyCancellable?
 
     private override init() {
         super.init()
@@ -91,6 +94,14 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] text, type in
                 self?.updateContent(text: text, type: type)
+            }
+
+        // === MOD: 2026-08-17 方案A 安卓在线状态变化 → 立即重绘（顶部状态行） ===
+        wsStatusCancellable = WebSocketManager.shared.$androidOnline
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] online in
+                self?.androidOnline = online
+                self?.renderFrame()
             }
 
         addObservers()
@@ -287,32 +298,48 @@ final class PiPOverlayManager: NSObject, ObservableObject {
             UIColor(white: 0, alpha: 0.75).setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
 
-            // 顶部类型标签 + 时间
+            // === MOD: 2026-08-17 方案A 顶部状态行（安卓在线/离线）===
+            // 第一行：状态点 + 状态文字
+            let statusStr = androidOnline ? "● 安卓在线" : "● 安卓离线"
+            let statusColor: UIColor = androidOnline ? .systemGreen : .systemRed
+            let statusAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 12),
+                .foregroundColor: statusColor
+            ]
+            statusStr.draw(at: CGPoint(x: 16, y: 8), withAttributes: statusAttrs)
+
+            // 第二行：类型标签（往下挪，避开状态行）
             let typeStr = type.isEmpty ? "AI播放端" : typeLabel(type)
             let timeStr = timeNow()
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.boldSystemFont(ofSize: 14),
                 .foregroundColor: UIColor.systemYellow
             ]
-            typeStr.draw(at: CGPoint(x: 16, y: 12), withAttributes: attrs)
+            typeStr.draw(at: CGPoint(x: 16, y: 26), withAttributes: attrs)
 
             let timeAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 12),
                 .foregroundColor: UIColor.systemGray2
             ]
             let timeSize = (timeStr as NSString).size(withAttributes: timeAttrs)
-            timeStr.draw(at: CGPoint(x: w - timeSize.width - 16, y: 14), withAttributes: timeAttrs)
+            timeStr.draw(at: CGPoint(x: w - timeSize.width - 16, y: 28), withAttributes: timeAttrs)
 
             // 中间大字：播报文字（自动换行，最多3行）
-            let textAttrs: [NSAttributedString.Key: Any] = [
+            // === MOD: 2026-08-17 方案A 安卓离线时，大字直接显示「安卓离线」，不再显示空暖场 ===
+            var displayText = text
+            var displayAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.boldSystemFont(ofSize: 22),
                 .foregroundColor: UIColor.white
             ]
-            let textRect = CGRect(x: 16, y: 46, width: w - 32, height: h - 60)
-            (text as NSString).draw(with: textRect,
-                                    options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                    attributes: textAttrs,
-                                    context: nil)
+            if !androidOnline {
+                displayText = "安卓离线"
+                displayAttrs[.foregroundColor] = UIColor.systemRed
+            }
+            let textRect = CGRect(x: 16, y: 56, width: w - 32, height: h - 70)
+            (displayText as NSString).draw(with: textRect,
+                                          options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                          attributes: displayAttrs,
+                                          context: nil)
         }
     }
 
